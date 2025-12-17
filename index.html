@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hivelytics — Hive Stats (Lite)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <div class="logo">H</div>
+        <div>
+          <h1>Hivelytics</h1>
+          <div class="muted">A lean Hive stats viewer focused on core chain data.</div>
+        </div>
+      </div>
+      <div class="controls">
+        <div>
+          <label for="rpc">RPC</label><br />
+          <select id="rpc">
+            <option value="https://api.openhive.network">https://api.openhive.network</option>
+            <option value="https://api.hive.blog">https://api.hive.blog</option>
+            <option value="https://api.deathwing.me">https://api.deathwing.me</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div id="customRpcWrap" style="display:none;">
+          <label for="customRpc">Custom RPC</label><br />
+          <input id="customRpc" type="text" placeholder="https://your-rpc.example" />
+        </div>
+        <div class="status-text" id="status">Select an RPC and enter an account.</div>
+      </div>
+    </header>
+
+    <div class="controls" style="margin-top:14px;">
+      <div class="input-group">
+        <input id="username" type="text" placeholder="Hive account (without @)" autocomplete="username" />
+        <button id="loadBtn">Load account</button>
+      </div>
+    </div>
+
+    <div id="dataWrap" style="display:none;">
+    <div class="grid" style="margin-top:18px;">
+      <div class="card">
+        <div class="inline" style="margin-bottom:4px;">
+          <h3>Account</h3>
+          <span class="pill" id="accountReputation">—</span>
+        </div>
+        <div class="account-header">
+          <div class="account-avatar-block">
+            <img id="accountAvatar" class="avatar" alt="avatar" />
+            <div class="account-name" id="accountName">—</div>
+          </div>
+          <div class="account-info">
+            <div class="stat-sub" id="accountMeta">Ready.</div>
+            <div class="account-bio" id="accountBio">—</div>
+          </div>
+        </div>
+        <div class="vote-box">
+          <div class="vote-info" id="voteValue">Vote @100%: —</div>
+          <div style="margin-top:10px;">
+            <input id="voteSlider" class="vote-slider" type="range" min="0" max="100" step="1" value="100" />
+          </div>
+        </div>
+        <div style="margin-top:12px;">
+          <div class="inline">
+            <h3>Stats</h3>
+            <span class="pill green">Stake & RC</span>
+          </div>
+          <div class="list">
+            <div class="row">
+              <div class="label">Effective HP</div>
+              <div class="value" id="statEffectiveHp">—</div>
+            </div>
+            <div class="row">
+              <div class="label">Hive Power</div>
+              <div class="value" id="statHivePower">—</div>
+            </div>
+            <div class="row">
+              <div class="label">Received Delegation</div>
+              <div class="value" id="statReceivedDel">—</div>
+            </div>
+            <div class="row">
+              <div class="label">Sent Delegation</div>
+              <div class="value" id="statSentDel">—</div>
+            </div>
+            <div class="row">
+              <div class="label">Power Down Amount</div>
+              <div class="value" id="statPowerDown">—</div>
+            </div>
+            <div class="row">
+              <div class="label">Resource Credits</div>
+              <div class="value" id="statRc">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="grid-column: span 2;">
+        <div class="inline" style="justify-content:space-between; gap:12px;">
+          <h3>Received Rewards</h3>
+          <div class="inline" style="gap:8px;">
+            <span class="pill green" id="curationAprPill">Curation APR —</span>
+            <span class="pill">Author / Curation / Witness</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Range</th>
+                <th>Author</th>
+                <th>Curation</th>
+                <th>Witness</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody id="rewardsTableBody">
+              <tr><td colspan="5" class="muted">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card no-blur analytics-card" style="margin-top:16px;">
+      <div class="inline" style="margin-bottom:6px;">
+        <h3>Analytics</h3>
+        <div class="inline" style="gap:6px;">
+          <span class="pill toggle active" data-range="7" id="analytics7d">7 Days</span>
+          <span class="pill toggle" data-range="30" id="analytics30d">30 Days</span>
+        </div>
+      </div>
+      <div class="analytics-grid">
+        <div class="row">
+          <div class="row-left">
+            <div class="label">Author Rewards</div>
+          </div>
+          <div class="value" id="analyticsAuthor">—</div>
+          <span class="icon-bg icon-author">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </span>
+        </div>
+        <div class="row">
+          <div class="row-left">
+            <div class="label">Curation Rewards</div>
+          </div>
+          <div class="value" id="analyticsCuration">—</div>
+          <span class="icon-bg icon-curation">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 2 9.5 8.5 3 10.5l6 3L11.5 20l2.5-6.5 6-2-6-3Z" />
+            </svg>
+          </span>
+        </div>
+        <div class="row">
+          <div class="row-left">
+            <div class="label">Witness Rewards</div>
+          </div>
+          <div class="value" id="analyticsWitness">—</div>
+          <span class="icon-bg icon-witness">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 4h16v6H4Z" />
+              <path d="M4 14h16v6H4Z" />
+              <path d="M9 8h6" />
+              <path d="M9 18h6" />
+            </svg>
+          </span>
+        </div>
+        <div class="row">
+          <div class="row-left">
+            <div class="label">~HBD Interest</div>
+          </div>
+          <div class="value" id="analyticsInterest">—</div>
+          <span class="icon-bg icon-interest">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 6v12" />
+              <path d="M9 9h4a2 2 0 0 1 0 4h-2a2 2 0 0 0 0 4h4" />
+            </svg>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card no-blur charts-container-card" style="margin-top:16px;">
+      <div class="inline" style="margin-bottom:10px;">
+        <h3>Charts</h3>
+        <span class="pill">Account view</span>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="inline" style="margin-bottom:6px;">
+            <div class="label" style="font-size:14px;color:#e5e7eb;">Account Growth</div>
+          </div>
+          <div class="chart-box">
+            <canvas id="growthChart"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="inline" style="margin-bottom:6px;">
+            <div class="label" style="font-size:14px;color:#e5e7eb;">Total Earned (USD)</div>
+          </div>
+          <div class="chart-box">
+            <canvas id="earnedChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+  <footer>
+      Built as a slim Hive stats view. Data pulls directly from your selected Hive RPC.
+    </footer>
+    </div>
+  </div>
+  <script src="dhive.js"></script>
+  <script src="chart.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
