@@ -8,6 +8,7 @@
     const analyticsPills = Array.from(document.querySelectorAll('.pill.toggle'));
     const avatarPlaceholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
     let hasLoaded = false;
+    let activeLoadId = 0;
     let lastRewardFund = null;
     let lastPriceFeed = null;
     let lastAccount = null;
@@ -28,6 +29,10 @@
     const HISTORY_FILTER_HIGH = (1n << 0n).toString(); // producer_reward (64 -> bit 0 of high)
     const VOTE_FILTER_LOW = 1; // vote op id 0
     const VOTE_FILTER_HIGH = 0;
+
+    function isStale(requestId) {
+      return requestId !== activeLoadId;
+    }
 
     function getSelectedRpcValue() {
       return rpcSelect.value === 'custom' ? customRpcEl.value.trim() : rpcSelect.value;
@@ -300,11 +305,12 @@
       return [];
     }
 
-    async function fetchPendingAuthor(client, username, priceFeed) {
+    async function fetchPendingAuthor(client, username, priceFeed, requestId = activeLoadId) {
       setPendingAuthorLoading();
       lastPendingAuthorHp = null;
       pendingAuthorRows = [];
       if (!client) {
+        if (isStale(requestId)) return;
         setPendingAuthorValue(null, priceFeed || lastPriceFeed);
         return;
       }
@@ -381,20 +387,24 @@
         if (price) {
           rows.forEach(r => { r.hpEq = (r.hbd || 0) / price; });
         }
+        if (isStale(requestId)) return;
         pendingAuthorRows = rows;
         renderPendingAuthorTable(rows, priceFeed || lastPriceFeed);
         setPendingAuthorValue(hpEq, priceFeed || lastPriceFeed);
       } catch (err) {
         console.error(err);
-        setPendingAuthorValue(null, priceFeed || lastPriceFeed);
+        if (!isStale(requestId)) {
+          setPendingAuthorValue(null, priceFeed || lastPriceFeed);
+        }
       }
     }
 
-    async function fetchPendingCuration(client, username, priceFeed, rewardFund = lastRewardFund) {
+    async function fetchPendingCuration(client, username, priceFeed, rewardFund = lastRewardFund, requestId = activeLoadId) {
       setPendingCurationLoading();
       lastPendingCurationHp = null;
       pendingCurationRows = [];
       if (!client) {
+        if (isStale(requestId)) return;
         setPendingCurationValue(null, priceFeed || lastPriceFeed);
         return;
       }
@@ -402,6 +412,7 @@
         const rf = rewardFund || lastRewardFund;
         const pf = priceFeed || lastPriceFeed;
         if (!rf || !pf) {
+          if (isStale(requestId)) return;
           setPendingCurationValue(null, pf);
           return;
         }
@@ -415,6 +426,7 @@
         }
         curationPortion = Math.max(0, Math.min(1, curationPortion || 0.5));
         if (!rewardBalance || !recentClaims || !price) {
+          if (isStale(requestId)) return;
           setPendingCurationValue(null, pf);
           return;
         }
@@ -434,6 +446,7 @@
           filtered.push(v);
         }
         if (!filtered.length) {
+          if (isStale(requestId)) return;
           setPendingCurationValue(0, pf);
           renderPendingCurationTable([], pf);
           return;
@@ -453,14 +466,19 @@
           });
         }
 
-        results.sort((a, b) => (a?.payoutMs || 0) - (b?.payoutMs || 0));
-        pendingCurationRows = results;
-        const totalHp = results.reduce((acc, r) => acc + (r.hp || 0), 0);
+        const maxPayoutMs = 7 * 24 * 60 * 60 * 1000;
+        const validResults = results.filter(r => r && r.payoutMs > 0 && r.payoutMs <= maxPayoutMs);
+        validResults.sort((a, b) => (a?.payoutMs || 0) - (b?.payoutMs || 0));
+        if (isStale(requestId)) return;
+        pendingCurationRows = validResults;
+        const totalHp = validResults.reduce((acc, r) => acc + (r.hp || 0), 0);
         setPendingCurationValue(totalHp, pf);
-        renderPendingCurationTable(results, pf);
+        renderPendingCurationTable(validResults, pf);
       } catch (err) {
         console.error(err);
-        setPendingCurationValue(null, priceFeed || lastPriceFeed);
+        if (!isStale(requestId)) {
+          setPendingCurationValue(null, priceFeed || lastPriceFeed);
+        }
       }
     }
 
@@ -589,6 +607,7 @@
     }
 
     async function handleLoad() {
+      const requestId = ++activeLoadId;
       const username = usernameEl.value.trim().replace(/^@/, '');
       const rpcValidation = validateRpcUrl(getSelectedRpcValue());
       const hiveLib = window.dhive;
@@ -631,6 +650,7 @@
         const rcAccount = Array.isArray(rcRes) ? rcRes[0] : (rcRes?.rc_accounts?.[0] || null);
         const profile = profileRes?.profile || profileRes || null;
 
+        if (isStale(requestId)) return;
         lastRewardFund = rewardFund;
         lastPriceFeed = priceFeed;
         lastAccount = account;
@@ -641,9 +661,9 @@
         renderAccount(account, dgp, rewardFund, priceFeed, rcAccount, profile);
 
         // Fetch in background
-        fetchPendingAuthor(client, username, priceFeed);
-        fetchPendingCuration(client, username, priceFeed, rewardFund);
-        fetchRewards(client, username, dgp, priceFeed, account);
+        fetchPendingAuthor(client, username, priceFeed, requestId);
+        fetchPendingCuration(client, username, priceFeed, rewardFund, requestId);
+        fetchRewards(client, username, dgp, priceFeed, account, requestId);
 
         syncUrlUsername(username);
         setStatus('Loaded from ' + rpc);
@@ -652,14 +672,18 @@
         updateVoteDisplay();
       } catch (err) {
         console.error(err);
-        setStatus(err.message || 'Failed to load', true);
-        resetData();
-        if (!hasLoaded) {
-          document.getElementById('dataWrap').style.display = 'none';
+        if (!isStale(requestId)) {
+          setStatus(err.message || 'Failed to load', true);
+          resetData();
+          if (!hasLoaded) {
+            document.getElementById('dataWrap').style.display = 'none';
+          }
         }
       } finally {
-        loadBtn.disabled = false;
-        loadBtn.textContent = 'Load account';
+        if (!isStale(requestId)) {
+          loadBtn.disabled = false;
+          loadBtn.textContent = 'Load account';
+        }
       }
     }
 
@@ -771,7 +795,7 @@
       document.getElementById('statRc').textContent = rcText;
     }
 
-    async function fetchRewards(client, username, dgp, priceFeed, account) {
+    async function fetchRewards(client, username, dgp, priceFeed, account, requestId = activeLoadId) {
       try {
         const now = new Date();
         const nowMs = now.getTime();
@@ -853,12 +877,14 @@
         };
 
         await fetchHistoryWindow(client, username, 30, (newOps) => {
+          if (isStale(requestId)) return;
           for (const [, item] of newOps) {
             processItem(item);
           }
           renderRewardsTableFromTotals(totals, priceFeed || lastPriceFeed, acct, dayInfo, dgp);
         }, 1000, false);
 
+        if (isStale(requestId)) return;
         lastChartBuckets = chartBuckets;
         lastChartDays = chartDays;
         renderRewardsTableFromTotals(totals, priceFeed || lastPriceFeed, acct, dayInfo, dgp);
@@ -1263,6 +1289,17 @@
       return lines.join('<br>');
     }
 
+    function safeHiveUrl(author, permlink) {
+      const cleanAuthor = typeof author === 'string' ? author.replace(/[^A-Za-z0-9.-]/g, '') : '';
+      const cleanPerm = typeof permlink === 'string' ? permlink.replace(/[^A-Za-z0-9._-]/g, '') : '';
+      if (!cleanAuthor || !cleanPerm) return '#';
+      try {
+        return `https://hive.blog/@${encodeURIComponent(cleanAuthor)}/${encodeURIComponent(cleanPerm)}`;
+      } catch (e) {
+        return '#';
+      }
+    }
+
     function renderPendingAuthorTable(rows, priceFeed) {
       const tbody = document.getElementById('pendingAuthorBody');
       if (!tbody) return;
@@ -1275,22 +1312,52 @@
       const price = priceFeed
         ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
         : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
-      tbody.innerHTML = sorted.map(row => {
+      tbody.innerHTML = '';
+      sorted.forEach(row => {
         const payoutIn = formatDuration(row.payoutMs);
-        const url = row.author && row.permlink ? `https://hive.blog/@${row.author}/${row.permlink}` : '#';
+        const url = safeHiveUrl(row.author, row.permlink);
         const typeIcon = row.isComment ? '💬' : '📝';
         const hpVal = row.hpEq ?? (price ? row.hbd * (1 / price) : 0);
-        return `
-          <tr>
-            <td class="pending-icon">${typeIcon}</td>
-            <td class="pending-title"><a href="${url}" target="_blank" rel="noopener">${row.title || `${row.author}/${row.permlink}`}</a></td>
-            <td class="numeric">${payoutIn}</td>
-            <td class="numeric">${format(row.hbd || 0, 3)} HBD</td>
-            <td class="numeric">${format(hpVal || 0, 3)} HP</td>
-            <td class="numeric">${format((row.beneficiaryCut || 0) * 100, 2)}%</td>
-          </tr>
-        `;
-      }).join('');
+
+        const tr = document.createElement('tr');
+
+        const iconTd = document.createElement('td');
+        iconTd.className = 'pending-icon';
+        iconTd.textContent = typeIcon;
+        tr.appendChild(iconTd);
+
+        const titleTd = document.createElement('td');
+        titleTd.className = 'pending-title';
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = row.title || `${row.author || ''}/${row.permlink || ''}`;
+        titleTd.appendChild(link);
+        tr.appendChild(titleTd);
+
+        const payoutTd = document.createElement('td');
+        payoutTd.className = 'numeric';
+        payoutTd.textContent = payoutIn;
+        tr.appendChild(payoutTd);
+
+        const hbdTd = document.createElement('td');
+        hbdTd.className = 'numeric';
+        hbdTd.textContent = `${format(row.hbd || 0, 3)} HBD`;
+        tr.appendChild(hbdTd);
+
+        const hpTd = document.createElement('td');
+        hpTd.className = 'numeric';
+        hpTd.textContent = `${format(hpVal || 0, 3)} HP`;
+        tr.appendChild(hpTd);
+
+        const beneTd = document.createElement('td');
+        beneTd.className = 'numeric';
+        beneTd.textContent = `${format((row.beneficiaryCut || 0) * 100, 2)}%`;
+        tr.appendChild(beneTd);
+
+        tbody.appendChild(tr);
+      });
       renderPendingAuthorSummary(sorted, priceFeed);
     }
 
@@ -1336,27 +1403,65 @@
       const price = priceFeed
         ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
         : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
-      tbody.innerHTML = rows.map(row => {
+      tbody.innerHTML = '';
+      rows.forEach(row => {
         const payoutIn = formatDuration(row.payoutMs);
-        const url = row.author && row.permlink ? `https://hive.blog/@${row.author}/${row.permlink}` : '#';
+        const url = safeHiveUrl(row.author, row.permlink);
         const typeIcon = row.isComment ? '💬' : '📝';
         const hpVal = row.hp ?? (price ? (row.hbd || 0) / price : 0);
         const voteWeight = row.weightPct !== undefined && row.weightPct !== null ? `${format(row.weightPct, 1)}%` : '—';
         const voteDelay = row.votedAfterMs ? formatDuration(row.votedAfterMs) : '—';
         const efficiency = row.efficiency !== undefined && row.efficiency !== null ? `${format(row.efficiency, 1)}%` : '—';
-        return `
-          <tr>
-            <td class="pending-icon">${typeIcon}</td>
-            <td class="pending-title"><a href="${url}" target="_blank" rel="noopener">${row.title || `${row.author}/${row.permlink}`}</a></td>
-            <td class="numeric">${payoutIn}</td>
-            <td class="numeric">${voteDelay}</td>
-            <td class="numeric">${voteWeight}</td>
-            <td class="numeric">${efficiency}</td>
-            <td class="numeric">${format(row.hbd || 0, 3)} HBD</td>
-            <td class="numeric">${format(hpVal || 0, 3)} HP</td>
-          </tr>
-        `;
-      }).join('');
+
+        const tr = document.createElement('tr');
+
+        const iconTd = document.createElement('td');
+        iconTd.className = 'pending-icon';
+        iconTd.textContent = typeIcon;
+        tr.appendChild(iconTd);
+
+        const titleTd = document.createElement('td');
+        titleTd.className = 'pending-title';
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = row.title || `${row.author || ''}/${row.permlink || ''}`;
+        titleTd.appendChild(link);
+        tr.appendChild(titleTd);
+
+        const payoutTd = document.createElement('td');
+        payoutTd.className = 'numeric';
+        payoutTd.textContent = payoutIn;
+        tr.appendChild(payoutTd);
+
+        const votedAfterTd = document.createElement('td');
+        votedAfterTd.className = 'numeric';
+        votedAfterTd.textContent = voteDelay;
+        tr.appendChild(votedAfterTd);
+
+        const weightTd = document.createElement('td');
+        weightTd.className = 'numeric';
+        weightTd.textContent = voteWeight;
+        tr.appendChild(weightTd);
+
+        const effTd = document.createElement('td');
+        effTd.className = 'numeric';
+        effTd.textContent = efficiency;
+        tr.appendChild(effTd);
+
+        const hbdTd = document.createElement('td');
+        hbdTd.className = 'numeric';
+        hbdTd.textContent = `${format(row.hbd || 0, 3)} HBD`;
+        tr.appendChild(hbdTd);
+
+        const hpTd = document.createElement('td');
+        hpTd.className = 'numeric';
+        hpTd.textContent = `${format(hpVal || 0, 3)} HP`;
+        tr.appendChild(hpTd);
+
+        tbody.appendChild(tr);
+      });
       renderPendingCurationSummary(rows, priceFeed);
     }
 
