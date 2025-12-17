@@ -202,9 +202,7 @@
       return isNaN(ms) ? null : ms;
     }
 
-    function renderPendingAuthor(priceFeed, pendingHp = lastPendingAuthorHp) {
-      // noop: analytics tiles removed
-    }
+    function renderPendingAuthor(priceFeed, pendingHp = lastPendingAuthorHp) {}
 
     function setPendingAuthorLoading() {
       const tableBody = document.getElementById('pendingAuthorBody');
@@ -233,9 +231,7 @@
       renderPendingAuthor(priceFeed, hp);
     }
 
-    function renderPendingCuration(priceFeed, pendingHp = lastPendingCurationHp) {
-      // noop: analytics tiles removed
-    }
+    function renderPendingCuration(priceFeed, pendingHp = lastPendingCurationHp) {}
 
     function setPendingCurationLoading() {
       const tableBody = document.getElementById('pendingCurationBody');
@@ -274,7 +270,6 @@
     }
 
     async function fetchAccountVotes(client, username) {
-      // Pull the latest account history (unfiltered) and keep vote ops.
       const variants = [
         [username, -1, 1000],
         [username, -1, 1000, true],
@@ -315,7 +310,7 @@
         return;
       }
       try {
-        const cutoffMs = Date.now() - 7 * 24 * 60 * 60 * 1000; // ignore items older than 7d
+        const cutoffMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
         const rows = [];
         const seen = new Set();
         let totalHbd = 0;
@@ -345,7 +340,7 @@
             isComment: !!p.parent_author,
             payoutMs: cashout - Date.now(),
             hbd: pending * authorShare,
-            hpEq: null, // filled below with price
+            hpEq: null,
             beneficiaryCut: beneCut
           });
         };
@@ -377,7 +372,6 @@
           console.warn('bridge fetch failed', err);
         }
 
-        // Sort by soonest payout.
         rows.sort((a, b) => (a?.payoutMs || 0) - (b?.payoutMs || 0));
 
         const price = priceFeed
@@ -514,12 +508,11 @@
     function getOwnedHp(account, dgp) {
       if (!account || !dgp) return 0;
       const vesting = parseAsset(account.vesting_shares);
-      // Use only the account's own vesting shares (no received delegations), and do not subtract delegated out.
       return vestsToHp(vesting, dgp);
     }
 
     function computeManabar(mana, max, lastUpdate) {
-      const regenSeconds = 5 * 24 * 60 * 60; // 5 days
+      const regenSeconds = 5 * 24 * 60 * 60;
       const now = Math.floor(Date.now() / 1000);
       const delta = Math.max(now - lastUpdate, 0);
       const regenerated = max * delta / regenSeconds;
@@ -581,7 +574,7 @@
         const hp = asset.hp || 0;
         const hive = asset.hive || 0;
         const hbd = asset.hbd || 0;
-        const hpEq = hp + hive + (price ? (hbd / price) : 0); // convert HBD to HP equivalent via price
+        const hpEq = hp + hive + (price ? (hbd / price) : 0);
         const usd = hpEq * price;
         return `${format(hpEq, 3)} HP ~$${format(usd, 2)}`;
       };
@@ -660,7 +653,6 @@
 
         renderAccount(account, dgp, rewardFund, priceFeed, rcAccount, profile);
 
-        // Fetch in background
         fetchPendingAuthor(client, username, priceFeed, requestId);
         fetchPendingCuration(client, username, priceFeed, rewardFund, requestId);
         fetchRewards(client, username, dgp, priceFeed, account, requestId);
@@ -910,14 +902,14 @@
       if (!createdMs || !voteTimeMs) return 1;
       const delta = Math.max(0, voteTimeMs - createdMs);
       const dayMs = 24 * 60 * 60 * 1000;
-      if (delta <= dayMs) return 1; // first 24h
-      if (delta <= 3 * dayMs) return 0.5; // 24-72h window
-      return 0.125; // after 72h
+      if (delta <= dayMs) return 1;
+      if (delta <= 3 * dayMs) return 0.5;
+      return 0.125;
     }
 
     async function estimateVoteCuration(client, vote, rewardBalance, recentClaims, curationPortion, username, price) {
       if (!vote) return 0;
-      if ((vote.percent || 0) <= 0) return 0; // skip downvotes or zero weight
+      if ((vote.percent || 0) <= 0) return 0;
       try {
         const { author, permlink } = parseAuthorPerm(vote);
         if (!author || !permlink) return 0;
@@ -1044,7 +1036,6 @@
         return new Date(chunk[0][1].timestamp).getTime(); // chunk[0] is oldest in this page
       };
 
-      // Seed with the latest page
       const headChunk = await fetchWithFallback(-1);
       if (!headChunk.length) return [];
       let oldestTs = processChunk(headChunk);
@@ -1081,7 +1072,7 @@
       if (!account || !dgp || !rewardFund || !priceFeed) return null;
       try {
         const VOTE_REGEN_SECONDS = 5 * 24 * 60 * 60;
-        const weight = weightPct * 100; // convert to 0-10000
+        const weight = weightPct * 100;
 
         const effectiveVests = parseAsset(account.vesting_shares) - parseAsset(account.delegated_vesting_shares) + parseAsset(account.received_vesting_shares);
         const fallbackMaxMana = effectiveVests * 1e6;
@@ -1092,18 +1083,18 @@
         const regenerated = (maxMana * elapsed) / VOTE_REGEN_SECONDS;
         const currentMana = Math.min(maxMana, currentManaBase + regenerated);
 
-        const neededMana = maxMana * 0.02 * (weight / 10000); // 2% at 100% vote
+        const neededMana = maxMana * 0.02 * (weight / 10000);
         const lowMana = currentMana < neededMana;
 
         // rshares derived from max mana (value constant as long as mana available)
         const rshares = maxMana * 0.02 * (weight / 10000);
 
-        const rewardBalance = parseAsset(rewardFund.reward_balance); // HIVE
+        const rewardBalance = parseAsset(rewardFund.reward_balance);
         const recentClaims = typeof rewardFund.recent_claims === 'string' ? parseFloat(rewardFund.recent_claims) : rewardFund.recent_claims;
         if (!recentClaims || !rewardBalance) return null;
         const hiveValue = (rshares / recentClaims) * rewardBalance;
 
-        const price = parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'); // HBD per HIVE
+        const price = parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE');
         const hbdValue = hiveValue * price;
 
         return { hive: format(hiveValue, 3), hbd: format(hbdValue, 3), lowMana, weight: weightPct };
@@ -1503,7 +1494,7 @@
       const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
       const today = new Date();
       const buckets = [];
-      for (let offset = 2; offset <= 6; offset++) { // past 5 days before yesterday
+      for (let offset = 2; offset <= 6; offset++) {
         const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - offset));
         const label = days[d.getUTCDay()];
         const key = d.toISOString().slice(0,10);
@@ -1831,8 +1822,6 @@
         windows[t].hbd += add.hbd || 0;
       }
     }
-
-    // delegations removed for now
 
     function parseUsernameFromPath(pathname = window.location.pathname) {
       if (!pathname) return '';
