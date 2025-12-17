@@ -15,6 +15,10 @@
     let lastRcAccount = null;
     let lastProfile = null;
     let lastTotals = null;
+    let lastPendingAuthorHp = null;
+    let pendingAuthorRows = [];
+    let lastPendingCurationHp = null;
+    let pendingCurationRows = [];
     let analyticsRange = 7;
     let growthChart = null;
     let earnedChart = null;
@@ -22,6 +26,8 @@
     let lastChartDays = null;
     const HISTORY_FILTER_LOW = ((1n << 51n) | (1n << 52n)).toString(); // author_reward (51), curation_reward (52)
     const HISTORY_FILTER_HIGH = (1n << 0n).toString(); // producer_reward (64 -> bit 0 of high)
+    const VOTE_FILTER_LOW = 1; // vote op id 0
+    const VOTE_FILTER_HIGH = 0;
 
     function getSelectedRpcValue() {
       return rpcSelect.value === 'custom' ? customRpcEl.value.trim() : rpcSelect.value;
@@ -85,6 +91,19 @@
       }
     });
 
+    function bindCollapse(btnId, bodyId) {
+      const btn = document.getElementById(btnId);
+      const body = document.getElementById(bodyId);
+      if (!btn || !body) return;
+      btn.addEventListener('click', () => {
+        const isHidden = body.style.display === 'none';
+        body.style.display = isHidden ? '' : 'none';
+        btn.textContent = isHidden ? 'Collapse' : 'Expand';
+      });
+    }
+    bindCollapse('pendingAuthorToggle', 'pendingAuthorBodyWrap');
+    bindCollapse('pendingCurationToggle', 'pendingCurationBodyWrap');
+
     function loadRpcPreference() {
       try {
         const saved = localStorage.getItem('hivelytics.rpc');
@@ -129,6 +148,12 @@
       if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
       const aprPill = document.getElementById('curationAprPill');
       if (aprPill) aprPill.textContent = 'Curation APR —';
+      lastPendingAuthorHp = null;
+      pendingAuthorRows = [];
+      lastPendingCurationHp = null;
+      pendingCurationRows = [];
+      setPendingAuthorLoading();
+      setPendingCurationLoading();
       clearCharts();
       lastChartBuckets = null;
       lastChartDays = null;
@@ -152,6 +177,291 @@
       if (abs >= 1e6) return format(num / 1e6, 2) + 'M';
       if (abs >= 1e3) return format(num / 1e3, 2) + 'K';
       return format(num, 0);
+    }
+
+    function formatDuration(ms) {
+      if (!ms || !isFinite(ms) || ms <= 0) return '—';
+      const totalSeconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+      if (days >= 1) return `${days}d`;
+      if (hours >= 1) return `${hours}h`;
+      return `${Math.max(1, minutes)}m`;
+    }
+
+    function parseHiveTime(val) {
+      if (!val) return null;
+      const iso = val.endsWith('Z') ? val : `${val}Z`;
+      const ms = Date.parse(iso);
+      return isNaN(ms) ? null : ms;
+    }
+
+    function renderPendingAuthor(priceFeed, pendingHp = lastPendingAuthorHp) {
+      // noop: analytics tiles removed
+    }
+
+    function setPendingAuthorLoading() {
+      const tableBody = document.getElementById('pendingAuthorBody');
+      if (tableBody) tableBody.innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
+      const titleCell = document.getElementById('authSummaryTitle');
+      const valCell = document.getElementById('authSummaryValue');
+      const hpCell = document.getElementById('authSummaryHp');
+      if (titleCell) titleCell.textContent = 'Loading…';
+      if (valCell) valCell.textContent = '';
+      if (hpCell) hpCell.textContent = '';
+    }
+
+    function setPendingAuthorValue(hp, priceFeed) {
+      lastPendingAuthorHp = hp;
+      if (hp === null || hp === undefined) {
+        const tableBody = document.getElementById('pendingAuthorBody');
+        if (tableBody) tableBody.innerHTML = '<tr><td colspan="6" class="muted">No data</td></tr>';
+        const titleCell = document.getElementById('authSummaryTitle');
+        const valCell = document.getElementById('authSummaryValue');
+        const hpCell = document.getElementById('authSummaryHp');
+        if (titleCell) titleCell.textContent = '—';
+        if (valCell) valCell.textContent = '';
+        if (hpCell) hpCell.textContent = '';
+        return;
+      }
+      renderPendingAuthor(priceFeed, hp);
+    }
+
+    function renderPendingCuration(priceFeed, pendingHp = lastPendingCurationHp) {
+      // noop: analytics tiles removed
+    }
+
+    function setPendingCurationLoading() {
+      const tableBody = document.getElementById('pendingCurationBody');
+      if (tableBody) tableBody.innerHTML = '<tr><td colspan="8" class="muted">Loading…</td></tr>';
+      const titleCell = document.getElementById('curSummaryTitle');
+      const effCell = document.getElementById('curSummaryEff');
+      const valCell = document.getElementById('curSummaryValue');
+      const hpCell = document.getElementById('curSummaryHp');
+      if (titleCell) titleCell.textContent = 'Loading…';
+      if (effCell) effCell.textContent = '';
+      if (valCell) valCell.textContent = '';
+      if (hpCell) hpCell.textContent = '';
+    }
+
+    function setPendingCurationValue(hp, priceFeed) {
+      lastPendingCurationHp = hp;
+      if (hp === null || hp === undefined) {
+        const tableBody = document.getElementById('pendingCurationBody');
+        if (tableBody) tableBody.innerHTML = '<tr><td colspan="8" class="muted">No data</td></tr>';
+        const titleCell = document.getElementById('curSummaryTitle');
+        const effCell = document.getElementById('curSummaryEff');
+        const valCell = document.getElementById('curSummaryValue');
+        const hpCell = document.getElementById('curSummaryHp');
+        if (titleCell) titleCell.textContent = '—';
+        if (effCell) effCell.textContent = '';
+        if (valCell) valCell.textContent = '';
+        if (hpCell) hpCell.textContent = '';
+        return;
+      }
+      renderPendingCuration(priceFeed, hp);
+    }
+
+    function isHivemindUnsupported(err) {
+      const msg = ((err && err.message) || (err && err.jse_shortmsg) || '').toLowerCase();
+      return msg.includes('hivemind');
+    }
+
+    async function fetchAccountVotes(client, username) {
+      // Pull the latest account history (unfiltered) and keep vote ops.
+      const variants = [
+        [username, -1, 1000],
+        [username, -1, 1000, true],
+      ];
+      for (const params of variants) {
+        try {
+          const history = await client.call('condenser_api', 'get_account_history', params);
+          if (!Array.isArray(history)) continue;
+          const votes = [];
+          for (const [, item] of history) {
+            const [opName, op] = item.op || [];
+            if (opName === 'vote') {
+              votes.push({
+                author: op.author,
+                permlink: op.permlink,
+                weight: op.weight,
+                percent: op.weight,
+                rshares: op.rshares || 0,
+                timestamp: item.timestamp
+              });
+            }
+          }
+          if (votes.length) return votes;
+        } catch (err) {
+          continue;
+        }
+      }
+      return [];
+    }
+
+    async function fetchPendingAuthor(client, username, priceFeed) {
+      setPendingAuthorLoading();
+      lastPendingAuthorHp = null;
+      pendingAuthorRows = [];
+      if (!client) {
+        setPendingAuthorValue(null, priceFeed || lastPriceFeed);
+        return;
+      }
+      try {
+        const cutoffMs = Date.now() - 7 * 24 * 60 * 60 * 1000; // ignore items older than 7d
+        const rows = [];
+        const seen = new Set();
+        let totalHbd = 0;
+
+        const collect = (p) => {
+          if (!p || !p.author || !p.permlink) return;
+          const key = `${p.author}/${p.permlink}`;
+          if (seen.has(key)) return;
+          const createdMs = parseHiveTime(p.created || p.posted || p.created_at);
+          if (createdMs && createdMs < cutoffMs) return;
+          const cashoutStr = p.cashout_time || p.payout_at || p.payout_time || '';
+          const cashout = parseHiveTime(cashoutStr);
+          if (!cashout || isNaN(cashout) || cashout <= Date.now()) return;
+          const maxPayout = parseAsset(p.max_accepted_payout || p.max_accepted_payout_value || '0');
+          if (maxPayout === 0) return;
+          const pending = parseAsset(p.pending_payout_value || '0');
+          if (p.is_paidout === true) return;
+          const beneficiaries = Array.isArray(p.beneficiaries) ? p.beneficiaries : [];
+          const beneCut = beneficiaries.reduce((acc, b) => acc + (Number(b.weight) || 0), 0) / 10000;
+          const authorShare = Math.max(0, Math.min(1, 1 - beneCut));
+          seen.add(key);
+          totalHbd += pending * authorShare;
+          rows.push({
+            author: p.author,
+            permlink: p.permlink,
+            title: p.title,
+            isComment: !!p.parent_author,
+            payoutMs: cashout - Date.now(),
+            hbd: pending * authorShare,
+            hpEq: null, // filled below with price
+            beneficiaryCut: beneCut
+          });
+        };
+
+        // Prefer Hivemind bridge (supports posts + comments), fall back to condenser.
+        const fetchBridge = async (sort) => {
+          const limit = 20; // bridge enforces max 20
+          const maxPages = 30; // up to ~600 items per type
+          let start_author = null;
+          let start_permlink = null;
+          for (let page = 0; page < maxPages; page++) {
+            const params = { sort, account: username, observer: username, limit, start_author, start_permlink };
+            const res = await client.call('bridge', 'get_account_posts', [params]);
+            if (!Array.isArray(res) || !res.length) break;
+            res.forEach(collect);
+            const last = res[res.length - 1];
+            const lastCreated = parseHiveTime(last?.created || last?.posted || last?.created_at);
+            start_author = last?.author || null;
+            start_permlink = last?.permlink || null;
+            if ((res.length < limit) || !start_author || !start_permlink) break;
+            if (lastCreated && lastCreated < cutoffMs) break;
+          }
+        };
+
+        try {
+          await fetchBridge('posts');
+          await fetchBridge('comments');
+        } catch (err) {
+          console.warn('bridge fetch failed', err);
+        }
+
+        // Sort by soonest payout.
+        rows.sort((a, b) => (a?.payoutMs || 0) - (b?.payoutMs || 0));
+
+        const price = priceFeed
+          ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
+          : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+        const hpEq = price ? (totalHbd / price) : 0;
+        if (price) {
+          rows.forEach(r => { r.hpEq = (r.hbd || 0) / price; });
+        }
+        pendingAuthorRows = rows;
+        renderPendingAuthorTable(rows, priceFeed || lastPriceFeed);
+        setPendingAuthorValue(hpEq, priceFeed || lastPriceFeed);
+      } catch (err) {
+        console.error(err);
+        setPendingAuthorValue(null, priceFeed || lastPriceFeed);
+      }
+    }
+
+    async function fetchPendingCuration(client, username, priceFeed, rewardFund = lastRewardFund) {
+      setPendingCurationLoading();
+      lastPendingCurationHp = null;
+      pendingCurationRows = [];
+      if (!client) {
+        setPendingCurationValue(null, priceFeed || lastPriceFeed);
+        return;
+      }
+      try {
+        const rf = rewardFund || lastRewardFund;
+        const pf = priceFeed || lastPriceFeed;
+        if (!rf || !pf) {
+          setPendingCurationValue(null, pf);
+          return;
+        }
+        const price = parseAsset(pf.base) / parseAsset(pf.quote || '1.000 HIVE');
+        const rewardBalance = parseAsset(rf.reward_balance);
+        const recentClaims = typeof rf.recent_claims === 'string' ? parseFloat(rf.recent_claims) : rf.recent_claims;
+        let curationPortion = 0.5;
+        if (rf.percent_curation_rewards !== undefined && rf.percent_curation_rewards !== null) {
+          curationPortion = Number(rf.percent_curation_rewards);
+          curationPortion = curationPortion > 1 ? curationPortion / 10000 : curationPortion;
+        }
+        curationPortion = Math.max(0, Math.min(1, curationPortion || 0.5));
+        if (!rewardBalance || !recentClaims || !price) {
+          setPendingCurationValue(null, pf);
+          return;
+        }
+
+        const votes = await fetchAccountVotes(client, username);
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const seen = new Set();
+        const filtered = [];
+        for (const v of votes) {
+          const ts = v.timestamp ? Date.parse(v.timestamp + 'Z') : null;
+          if (!ts || isNaN(ts) || ts < cutoff) continue;
+          const { author, permlink } = parseAuthorPerm(v);
+          if (!author || !permlink) continue;
+          const key = `${author}/${permlink}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          filtered.push(v);
+        }
+        if (!filtered.length) {
+          setPendingCurationValue(0, pf);
+          renderPendingCurationTable([], pf);
+          return;
+        }
+
+        const maxVotes = 150;
+        const candidates = filtered.slice(0, maxVotes);
+        const results = [];
+        const batchSize = 6;
+        for (let i = 0; i < candidates.length; i += batchSize) {
+          const batch = candidates.slice(i, i + batchSize).map(v =>
+            estimateVoteCuration(client, v, rewardBalance, recentClaims, curationPortion, username, price)
+          );
+          const batchResults = await Promise.all(batch);
+          batchResults.forEach(res => {
+            if (res && res.hp) results.push(res);
+          });
+        }
+
+        results.sort((a, b) => (a?.payoutMs || 0) - (b?.payoutMs || 0));
+        pendingCurationRows = results;
+        const totalHp = results.reduce((acc, r) => acc + (r.hp || 0), 0);
+        setPendingCurationValue(totalHp, pf);
+        renderPendingCurationTable(results, pf);
+      } catch (err) {
+        console.error(err);
+        setPendingCurationValue(null, priceFeed || lastPriceFeed);
+      }
     }
 
     function repScore(raw) {
@@ -331,6 +641,8 @@
         renderAccount(account, dgp, rewardFund, priceFeed, rcAccount, profile);
 
         // Fetch in background
+        fetchPendingAuthor(client, username, priceFeed);
+        fetchPendingCuration(client, username, priceFeed, rewardFund);
         fetchRewards(client, username, dgp, priceFeed, account);
 
         syncUrlUsername(username);
@@ -381,6 +693,22 @@
       lastRcAccount = null;
       lastProfile = null;
       lastTotals = null;
+      setPendingAuthorValue(null, null);
+      setPendingCurationValue(null, null);
+      lastPendingCurationHp = null;
+      pendingCurationRows = [];
+      const authBody = document.getElementById('pendingAuthorBody');
+      if (authBody) authBody.innerHTML = '<tr><td colspan="6" class="muted">No data</td></tr>';
+      const curBody = document.getElementById('pendingCurationBody');
+      if (curBody) curBody.innerHTML = '<tr><td colspan="8" class="muted">No data</td></tr>';
+      const titleCell = document.getElementById('curSummaryTitle');
+      const effCell = document.getElementById('curSummaryEff');
+      const valCell = document.getElementById('curSummaryValue');
+      const hpCell = document.getElementById('curSummaryHp');
+      if (titleCell) titleCell.textContent = '—';
+      if (effCell) effCell.textContent = '';
+      if (valCell) valCell.textContent = '';
+      if (hpCell) hpCell.textContent = '';
       document.getElementById('rewardsTableBody').innerHTML = '<tr><td colspan="5" class="muted">No data</td></tr>';
       if (!hasLoaded) {
         document.getElementById('dataWrap').style.display = 'none';
@@ -537,6 +865,118 @@
         renderCharts(chartBuckets, chartDays, priceFeed || lastPriceFeed, analyticsRange, acct || lastAccount, dgp || lastDgp);
       } catch (err) {
         console.error(err);
+      }
+    }
+
+    function parseAuthorPerm(vote) {
+      if (!vote) return { author: '', permlink: '' };
+      if (vote.author && vote.permlink) {
+        return { author: vote.author, permlink: vote.permlink };
+      }
+      if (vote.authorperm) {
+        const [author, ...rest] = vote.authorperm.split('/');
+        return { author, permlink: rest.join('/') };
+      }
+      return { author: '', permlink: '' };
+    }
+
+    function curationWeightFactor(voteTimeMs, createdMs) {
+      if (!createdMs || !voteTimeMs) return 1;
+      const delta = Math.max(0, voteTimeMs - createdMs);
+      const dayMs = 24 * 60 * 60 * 1000;
+      if (delta <= dayMs) return 1; // first 24h
+      if (delta <= 3 * dayMs) return 0.5; // 24-72h window
+      return 0.125; // after 72h
+    }
+
+    async function estimateVoteCuration(client, vote, rewardBalance, recentClaims, curationPortion, username, price) {
+      if (!vote) return 0;
+      if ((vote.percent || 0) <= 0) return 0; // skip downvotes or zero weight
+      try {
+        const { author, permlink } = parseAuthorPerm(vote);
+        if (!author || !permlink) return 0;
+        const content = await client.call('condenser_api', 'get_content', [author, permlink]);
+        if (!content) return 0;
+        if (content.allow_curation_rewards === false) return 0;
+        const maxPayout = parseAsset(content.max_accepted_payout);
+        if (maxPayout === 0) return 0;
+        const cashout = Date.parse(content.cashout_time ? (content.cashout_time + 'Z') : '');
+        if (!cashout || isNaN(cashout) || cashout <= Date.now()) return 0;
+        const createdMs = Date.parse(content.created ? (content.created + 'Z') : '') || null;
+        const postRshares = Math.max(0, Number(content.net_rshares || 0));
+        if (!postRshares || postRshares <= 0) return 0;
+        const activeVotes = await client.call('condenser_api', 'get_active_votes', [author, permlink]);
+        let voteRshares = 0;
+        let totalVoteRshares = 0;
+        let voteTimeMs = null;
+        let votePercent = Number(vote.weight || vote.percent || 0);
+        let totalWeightedRshares = 0;
+        let voteWeightedRshares = 0;
+        if (Array.isArray(activeVotes) && activeVotes.length) {
+          for (const av of activeVotes) {
+            const rs = Math.max(0, Number(av.rshares || 0));
+            totalVoteRshares += rs;
+            const avTime = Date.parse(av.time ? (av.time + 'Z') : '') || null;
+            const factor = curationWeightFactor(avTime, createdMs);
+            totalWeightedRshares += rs * factor;
+            if (av.voter === username) {
+              voteRshares = rs;
+              voteTimeMs = Date.parse(av.time ? (av.time + 'Z') : '') || voteTimeMs;
+              votePercent = Number(av.percent || votePercent || 0);
+              voteWeightedRshares = rs * factor;
+            }
+          }
+        }
+        if (!voteRshares && vote.rshares) {
+          voteRshares = Math.max(0, Number(vote.rshares));
+        }
+        const totalVoteWeight = Number(content.total_vote_weight || 0);
+        if ((!totalVoteWeight) && (!totalVoteRshares || !voteRshares)) return 0;
+        if (!voteTimeMs && vote.timestamp) {
+          voteTimeMs = Date.parse(vote.timestamp + 'Z') || null;
+        }
+        const priceBase = price || 0;
+        const pendingPayout = Math.min(parseAsset(content.pending_payout_value), maxPayout);
+        const shareOfPost = voteRshares && postRshares
+          ? (voteRshares / postRshares)
+          : 0;
+        const weightFactor = voteWeightedRshares && totalWeightedRshares
+          ? (voteWeightedRshares / voteRshares)
+          : curationWeightFactor(voteTimeMs, createdMs);
+        const weightedShare = voteWeightedRshares && totalWeightedRshares
+          ? (voteWeightedRshares / totalWeightedRshares)
+          : shareOfPost;
+        if (weightedShare <= 0) return 0;
+        const isComment = !!content.parent_author;
+
+        const curationPoolHbd = pendingPayout * curationPortion;
+        const hbdVal = curationPoolHbd * weightedShare;
+        const hpVal = priceBase ? (hbdVal / priceBase) : 0;
+        const payoutMs = cashout - Date.now();
+        const votedAfterMs = createdMs && voteTimeMs ? Math.max(0, voteTimeMs - createdMs) : null;
+        const baselinePotentialHbd = totalVoteRshares > 0
+          ? (curationPoolHbd * (voteRshares / totalVoteRshares))
+          : 0;
+        const efficiency = baselinePotentialHbd > 0
+          ? Math.max(0, (hbdVal / baselinePotentialHbd) * 100)
+          : (weightedShare * 100); // fallback to proportional share
+        return {
+          hp: hpVal,
+          hbd: hbdVal,
+          author,
+          permlink,
+          title: content.title || `${author}/${permlink}`,
+          payoutMs,
+          votedAfterMs,
+          weightPct: (votePercent || 0) / 100,
+          efficiency: efficiency,
+          isComment
+        };
+      } catch (err) {
+        if (isHivemindUnsupported(err)) {
+          throw err;
+        }
+        return 0;
       }
     }
 
@@ -821,6 +1261,137 @@
         lines.push(`<span class="muted">~$${format(usd, 2)}</span>`);
       }
       return lines.join('<br>');
+    }
+
+    function renderPendingAuthorTable(rows, priceFeed) {
+      const tbody = document.getElementById('pendingAuthorBody');
+      if (!tbody) return;
+      if (!rows || !rows.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="muted">No pending payouts</td></tr>';
+        renderPendingAuthorSummary([], priceFeed);
+        return;
+      }
+      const sorted = [...rows].sort((a, b) => (b.hbd || 0) - (a.hbd || 0));
+      const price = priceFeed
+        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+      tbody.innerHTML = sorted.map(row => {
+        const payoutIn = formatDuration(row.payoutMs);
+        const url = row.author && row.permlink ? `https://hive.blog/@${row.author}/${row.permlink}` : '#';
+        const typeIcon = row.isComment ? '💬' : '📝';
+        const hpVal = row.hpEq ?? (price ? row.hbd * (1 / price) : 0);
+        return `
+          <tr>
+            <td class="pending-icon">${typeIcon}</td>
+            <td class="pending-title"><a href="${url}" target="_blank" rel="noopener">${row.title || `${row.author}/${row.permlink}`}</a></td>
+            <td class="numeric">${payoutIn}</td>
+            <td class="numeric">${format(row.hbd || 0, 3)} HBD</td>
+            <td class="numeric">${format(hpVal || 0, 3)} HP</td>
+            <td class="numeric">${format((row.beneficiaryCut || 0) * 100, 2)}%</td>
+          </tr>
+        `;
+      }).join('');
+      renderPendingAuthorSummary(sorted, priceFeed);
+    }
+
+    function renderPendingAuthorSummary(rows, priceFeed) {
+      const titleCell = document.getElementById('authSummaryTitle');
+      const valCell = document.getElementById('authSummaryValue');
+      const hpCell = document.getElementById('authSummaryHp');
+      if (!titleCell || !valCell || !hpCell) return;
+      if (!rows || !rows.length) {
+        titleCell.textContent = '—';
+        valCell.textContent = '';
+        hpCell.textContent = '';
+        return;
+      }
+      const price = priceFeed
+        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+      const posts = rows.filter(r => !r.isComment).length;
+      const comments = rows.length - posts;
+      const totalHbd = rows.reduce((acc, r) => acc + (r.hbd || 0), 0);
+      const totalHp = rows.reduce((acc, r) => {
+        if (typeof r.hpEq === 'number') return acc + r.hpEq;
+        if (price) return acc + ((r.hbd || 0) / price);
+        return acc;
+      }, 0);
+
+      titleCell.textContent = `${format(posts, 0)} Posts + ${format(comments, 0)} Comments`;
+      valCell.textContent = `${format(totalHbd, 3)} HBD`;
+      hpCell.textContent = `${format(totalHp, 3)} HP`;
+    }
+
+    function renderPendingCurationTable(rows, priceFeed) {
+      const tbody = document.getElementById('pendingCurationBody');
+      if (!tbody) return;
+      if ((!rows || !rows.length) && lastPendingCurationHp === null) {
+        return;
+      }
+      if (!rows || !rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="muted">No pending curation rewards</td></tr>';
+        renderPendingCurationSummary([], priceFeed);
+        return;
+      }
+      const price = priceFeed
+        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+      tbody.innerHTML = rows.map(row => {
+        const payoutIn = formatDuration(row.payoutMs);
+        const url = row.author && row.permlink ? `https://hive.blog/@${row.author}/${row.permlink}` : '#';
+        const typeIcon = row.isComment ? '💬' : '📝';
+        const hpVal = row.hp ?? (price ? (row.hbd || 0) / price : 0);
+        const voteWeight = row.weightPct !== undefined && row.weightPct !== null ? `${format(row.weightPct, 1)}%` : '—';
+        const voteDelay = row.votedAfterMs ? formatDuration(row.votedAfterMs) : '—';
+        const efficiency = row.efficiency !== undefined && row.efficiency !== null ? `${format(row.efficiency, 1)}%` : '—';
+        return `
+          <tr>
+            <td class="pending-icon">${typeIcon}</td>
+            <td class="pending-title"><a href="${url}" target="_blank" rel="noopener">${row.title || `${row.author}/${row.permlink}`}</a></td>
+            <td class="numeric">${payoutIn}</td>
+            <td class="numeric">${voteDelay}</td>
+            <td class="numeric">${voteWeight}</td>
+            <td class="numeric">${efficiency}</td>
+            <td class="numeric">${format(row.hbd || 0, 3)} HBD</td>
+            <td class="numeric">${format(hpVal || 0, 3)} HP</td>
+          </tr>
+        `;
+      }).join('');
+      renderPendingCurationSummary(rows, priceFeed);
+    }
+
+    function renderPendingCurationSummary(rows, priceFeed) {
+      const titleCell = document.getElementById('curSummaryTitle');
+      const effCell = document.getElementById('curSummaryEff');
+      const valCell = document.getElementById('curSummaryValue');
+      const hpCell = document.getElementById('curSummaryHp');
+      if (!titleCell || !effCell || !valCell || !hpCell) return;
+      if (!rows || !rows.length) {
+        titleCell.textContent = '—';
+        effCell.textContent = '';
+        valCell.textContent = '';
+        hpCell.textContent = '';
+        return;
+      }
+      const price = priceFeed
+        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+      const posts = rows.filter(r => !r.isComment).length;
+      const comments = rows.length - posts;
+      const totalHbd = rows.reduce((acc, r) => acc + (r.hbd || 0), 0);
+      const totalHp = rows.reduce((acc, r) => {
+        if (typeof r.hp === 'number') return acc + r.hp;
+        if (price) return acc + ((r.hbd || 0) / price);
+        return acc;
+      }, 0);
+      const weight = rows.reduce((acc, r) => acc + (r.hbd || 0), 0);
+      const effSum = rows.reduce((acc, r) => acc + ((r.efficiency || 0) * (r.hbd || 0)), 0);
+      const avgEff = weight ? (effSum / weight) : (rows.reduce((acc, r) => acc + (r.efficiency || 0), 0) / rows.length);
+
+      titleCell.textContent = `${format(posts, 0)} Posts + ${format(comments, 0)} Comments`;
+      effCell.textContent = `${format(avgEff, 2)}%`;
+      valCell.textContent = `${format(totalHbd, 3)} HBD`;
+      hpCell.textContent = `${format(totalHp, 3)} HP`;
     }
 
     function buildDayBuckets() {

@@ -263,6 +263,8 @@ button:active { transform: translateY(1px); }
 }
 .icon-author { color: #22c55e; }
 .icon-curation { color: #38bdf8; }
+.icon-pending-curation { color: #2dd4bf; }
+.icon-pending-author { color: #c084fc; }
 .icon-witness { color: #a78bfa; }
 .icon-interest { color: #f59e0b; }
 .icon-bg {
@@ -309,6 +311,19 @@ button:active { transform: translateY(1px); }
   position: relative;
   height: 240px;
 }
+.stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+.collapse-btn {
+  cursor: pointer;
+  user-select: none;
+}
+.collapse-body {
+  margin-top: 6px;
+}
 table {
   width: 100%;
   border-collapse: collapse;
@@ -321,6 +336,61 @@ th, td {
 }
 th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: 0.02em; }
 .table-wrap { overflow-x: auto; }
+.pending-card .table-wrap {
+  margin-top: 6px;
+}
+.table-summary {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+}
+.table-summary .summary-item {
+  color: #e5e7eb;
+  font-weight: 600;
+}
+.pending-table th, .pending-table td { white-space: nowrap; }
+.pending-table td:nth-child(2) { white-space: normal; }
+.pending-table tr:nth-child(odd) { background: rgba(255,255,255,0.02); }
+.pending-table tr:hover { background: rgba(255,255,255,0.05); }
+.pending-icon { text-align: center; }
+.pending-title a { color: #bfdbfe; text-decoration: none; }
+.pending-title a:hover { text-decoration: underline; }
+.pending-table th.numeric,
+.pending-table td.numeric {
+  text-align: right;
+}
+.pending-scroll {
+  max-height: 420px;
+  overflow: auto;
+  position: relative;
+}
+.pending-curation-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.pending-curation-table thead th,
+.pending-author-table thead th {
+  position: sticky;
+  top: 0;
+  background: #0f131c;
+  z-index: 2;
+}
+.pending-curation-table tfoot td,
+.pending-author-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid var(--border);
+  background: #0f131c;
+  z-index: 1;
+}
 .empty {
   color: var(--muted);
   font-size: 14px;

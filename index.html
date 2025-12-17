@@ -189,7 +189,6 @@
     <div class="card no-blur charts-container-card" style="margin-top:16px;">
       <div class="inline" style="margin-bottom:10px;">
         <h3>Charts</h3>
-        <span class="pill">Account view</span>
       </div>
       <div class="charts-grid">
         <div class="chart-card">
@@ -206,6 +205,105 @@
           </div>
           <div class="chart-box">
             <canvas id="earnedChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stacked">
+      <div class="card pending-card">
+        <div class="inline" style="margin-bottom:6px;">
+          <h3>Pending Author Rewards</h3>
+          <div class="inline" style="gap:8px;">
+            <span class="pill toggle collapse-btn" id="pendingAuthorToggle">Collapse</span>
+          </div>
+        </div>
+        <div id="pendingAuthorBodyWrap" class="collapse-body">
+          <div class="table-wrap pending-scroll">
+            <table class="pending-table pending-author-table">
+              <colgroup>
+                <col style="width:40px;">
+                <col>
+                <col style="width:90px;">
+                <col style="width:100px;">
+                <col style="width:80px;">
+                <col style="width:110px;">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th style="width:32px;">Type</th>
+                  <th>Title</th>
+                  <th class="numeric">Payout In</th>
+                  <th class="numeric">Value</th>
+                  <th class="numeric">HP</th>
+                  <th>Beneficiary</th>
+                </tr>
+              </thead>
+              <tbody id="pendingAuthorBody">
+                <tr><td colspan="6" class="muted">No data</td></tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td></td>
+                  <td id="authSummaryTitle"></td>
+                  <td></td>
+                  <td id="authSummaryValue" class="numeric"></td>
+                  <td id="authSummaryHp" class="numeric"></td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="card pending-card">
+        <div class="inline" style="margin-bottom:6px;">
+          <h3>Pending Curation Rewards</h3>
+          <div class="inline" style="gap:8px;">
+            <span class="pill toggle collapse-btn" id="pendingCurationToggle">Collapse</span>
+          </div>
+        </div>
+        <div id="pendingCurationBodyWrap" class="collapse-body">
+          <div class="table-wrap pending-scroll">
+            <table class="pending-table pending-curation-table">
+              <colgroup>
+                <col style="width:40px;">
+                <col>
+                <col style="width:90px;">
+                <col style="width:100px;">
+                <col style="width:80px;">
+                <col style="width:90px;">
+                <col style="width:110px;">
+                <col style="width:90px;">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Title</th>
+                  <th class="numeric">Payout In</th>
+                  <th class="numeric">Voted After</th>
+                  <th class="numeric">Weight</th>
+                  <th class="numeric">Eff.</th>
+                  <th class="numeric">Value</th>
+                  <th class="numeric">HP</th>
+                </tr>
+              </thead>
+              <tbody id="pendingCurationBody">
+                <tr><td colspan="8" class="muted">No data</td></tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td></td>
+                  <td id="curSummaryTitle"></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td id="curSummaryEff" class="numeric"></td>
+                  <td id="curSummaryValue" class="numeric"></td>
+                  <td id="curSummaryHp" class="numeric"></td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
         </div>
       </div>
