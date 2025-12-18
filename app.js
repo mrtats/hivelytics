@@ -20,6 +20,8 @@
     let pendingAuthorRows = [];
     let lastPendingCurationHp = null;
     let pendingCurationRows = [];
+    let pendingCurationEligibleVoteCount = 0;
+    let pendingCurationProcessedVoteCount = 0;
     let analyticsRange = 7;
     let growthChart = null;
     let earnedChart = null;
@@ -27,8 +29,9 @@
     let lastChartDays = null;
     const HISTORY_FILTER_LOW = ((1n << 51n) | (1n << 52n)).toString(); // author_reward (51), curation_reward (52)
     const HISTORY_FILTER_HIGH = (1n << 0n).toString(); // producer_reward (64 -> bit 0 of high)
-    const VOTE_FILTER_LOW = 1; // vote op id 0
-    const VOTE_FILTER_HIGH = 0;
+    const VOTE_FILTER_LOW = (1n << 0n).toString(); // vote op id 0
+    const VOTE_FILTER_HIGH = '0';
+    const PENDING_CURATION_LOOKBACK_DAYS = 10;
 
     function isStale(requestId) {
       return requestId !== activeLoadId;
@@ -270,34 +273,34 @@
     }
 
     async function fetchAccountVotes(client, username) {
-      const variants = [
-        [username, -1, 1000],
-        [username, -1, 1000, true],
-      ];
-      for (const params of variants) {
-        try {
-          const history = await client.call('condenser_api', 'get_account_history', params);
-          if (!Array.isArray(history)) continue;
-          const votes = [];
-          for (const [, item] of history) {
+      const votes = [];
+      await fetchHistoryWindow(
+        client,
+        username,
+        PENDING_CURATION_LOOKBACK_DAYS,
+        (newOps) => {
+          for (const [, item] of newOps) {
             const [opName, op] = item.op || [];
             if (opName === 'vote') {
+              if (!op || op.voter !== username) continue;
               votes.push({
+                voter: op.voter,
                 author: op.author,
                 permlink: op.permlink,
                 weight: op.weight,
                 percent: op.weight,
-                rshares: op.rshares || 0,
+                rshares: Number(op.rshares || 0),
                 timestamp: item.timestamp
               });
             }
           }
-          if (votes.length) return votes;
-        } catch (err) {
-          continue;
-        }
-      }
-      return [];
+        },
+        1000,
+        true,
+        VOTE_FILTER_LOW,
+        VOTE_FILTER_HIGH
+      );
+      return votes;
     }
 
     async function fetchPendingAuthor(client, username, priceFeed, requestId = activeLoadId) {
@@ -397,6 +400,8 @@
       setPendingCurationLoading();
       lastPendingCurationHp = null;
       pendingCurationRows = [];
+      pendingCurationEligibleVoteCount = 0;
+      pendingCurationProcessedVoteCount = 0;
       if (!client) {
         if (isStale(requestId)) return;
         setPendingCurationValue(null, priceFeed || lastPriceFeed);
@@ -426,19 +431,23 @@
         }
 
         const votes = await fetchAccountVotes(client, username);
-        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        const seen = new Set();
-        const filtered = [];
+        const cutoff = Date.now() - PENDING_CURATION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+        const latestByTarget = new Map();
         for (const v of votes) {
-          const ts = v.timestamp ? Date.parse(v.timestamp + 'Z') : null;
+          const ts = parseHiveTime(v.timestamp);
           if (!ts || isNaN(ts) || ts < cutoff) continue;
           const { author, permlink } = parseAuthorPerm(v);
           if (!author || !permlink) continue;
           const key = `${author}/${permlink}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          filtered.push(v);
+          const prev = latestByTarget.get(key);
+          if (!prev || ts > prev.ts) {
+            latestByTarget.set(key, { v, ts });
+          }
         }
+        const filtered = Array.from(latestByTarget.values())
+          .sort((a, b) => b.ts - a.ts)
+          .map(item => item.v);
+        pendingCurationEligibleVoteCount = filtered.length;
         if (!filtered.length) {
           if (isStale(requestId)) return;
           setPendingCurationValue(0, pf);
@@ -446,8 +455,8 @@
           return;
         }
 
-        const maxVotes = 150;
-        const candidates = filtered.slice(0, maxVotes);
+        const candidates = filtered;
+        pendingCurationProcessedVoteCount = candidates.length;
         const results = [];
         const batchSize = 6;
         for (let i = 0; i < candidates.length; i += batchSize) {
@@ -460,8 +469,7 @@
           });
         }
 
-        const maxPayoutMs = 7 * 24 * 60 * 60 * 1000;
-        const validResults = results.filter(r => r && r.payoutMs > 0 && r.payoutMs <= maxPayoutMs);
+        const validResults = results.filter(r => r && r.payoutMs > 0);
         validResults.sort((a, b) => (a?.payoutMs || 0) - (b?.payoutMs || 0));
         if (isStale(requestId)) return;
         pendingCurationRows = validResults;
@@ -918,12 +926,14 @@
         if (content.allow_curation_rewards === false) return 0;
         const maxPayout = parseAsset(content.max_accepted_payout);
         if (maxPayout === 0) return 0;
-        const cashout = Date.parse(content.cashout_time ? (content.cashout_time + 'Z') : '');
+        const cashout = parseHiveTime(content.cashout_time);
         if (!cashout || isNaN(cashout) || cashout <= Date.now()) return 0;
-        const createdMs = Date.parse(content.created ? (content.created + 'Z') : '') || null;
+        const createdMs = parseHiveTime(content.created) || null;
         const postRshares = Math.max(0, Number(content.net_rshares || 0));
         if (!postRshares || postRshares <= 0) return 0;
-        const activeVotes = await client.call('condenser_api', 'get_active_votes', [author, permlink]);
+        const activeVotes = (Array.isArray(content.active_votes) && content.active_votes.length)
+          ? content.active_votes
+          : await client.call('condenser_api', 'get_active_votes', [author, permlink]);
         let voteRshares = 0;
         let totalVoteRshares = 0;
         let voteTimeMs = null;
@@ -934,12 +944,12 @@
           for (const av of activeVotes) {
             const rs = Math.max(0, Number(av.rshares || 0));
             totalVoteRshares += rs;
-            const avTime = Date.parse(av.time ? (av.time + 'Z') : '') || null;
+            const avTime = parseHiveTime(av.time) || null;
             const factor = curationWeightFactor(avTime, createdMs);
             totalWeightedRshares += rs * factor;
             if (av.voter === username) {
               voteRshares = rs;
-              voteTimeMs = Date.parse(av.time ? (av.time + 'Z') : '') || voteTimeMs;
+              voteTimeMs = parseHiveTime(av.time) || voteTimeMs;
               votePercent = Number(av.percent || votePercent || 0);
               voteWeightedRshares = rs * factor;
             }
@@ -948,36 +958,33 @@
         if (!voteRshares && vote.rshares) {
           voteRshares = Math.max(0, Number(vote.rshares));
         }
-        const totalVoteWeight = Number(content.total_vote_weight || 0);
-        if ((!totalVoteWeight) && (!totalVoteRshares || !voteRshares)) return 0;
+        if (!voteRshares || voteRshares <= 0) return 0;
         if (!voteTimeMs && vote.timestamp) {
-          voteTimeMs = Date.parse(vote.timestamp + 'Z') || null;
+          voteTimeMs = parseHiveTime(vote.timestamp) || null;
         }
         const priceBase = price || 0;
-        const pendingPayout = Math.min(parseAsset(content.pending_payout_value), maxPayout);
         const shareOfPost = voteRshares && postRshares
           ? (voteRshares / postRshares)
           : 0;
-        const weightFactor = voteWeightedRshares && totalWeightedRshares
-          ? (voteWeightedRshares / voteRshares)
-          : curationWeightFactor(voteTimeMs, createdMs);
         const weightedShare = voteWeightedRshares && totalWeightedRshares
           ? (voteWeightedRshares / totalWeightedRshares)
-          : shareOfPost;
-        if (weightedShare <= 0) return 0;
+          : (voteRshares && totalVoteRshares ? (voteRshares / totalVoteRshares) : shareOfPost);
+        const safeShare = isFinite(weightedShare) && weightedShare > 0 ? weightedShare : 0;
+        if (!safeShare) return 0;
         const isComment = !!content.parent_author;
 
-        const curationPoolHbd = pendingPayout * curationPortion;
-        const hbdVal = curationPoolHbd * weightedShare;
-        const hpVal = priceBase ? (hbdVal / priceBase) : 0;
+        const postPayoutHive = recentClaims ? ((postRshares / recentClaims) * rewardBalance) : 0;
+        const curationPoolHive = postPayoutHive * curationPortion;
+        const hpVal = curationPoolHive * safeShare;
+        const hbdVal = hpVal * priceBase;
         const payoutMs = cashout - Date.now();
         const votedAfterMs = createdMs && voteTimeMs ? Math.max(0, voteTimeMs - createdMs) : null;
         const baselinePotentialHbd = totalVoteRshares > 0
-          ? (curationPoolHbd * (voteRshares / totalVoteRshares))
+          ? ((curationPoolHive * (voteRshares / totalVoteRshares)) * priceBase)
           : 0;
-        const efficiency = baselinePotentialHbd > 0
+        const efficiency = baselinePotentialHbd > 0 && hbdVal > 0
           ? Math.max(0, (hbdVal / baselinePotentialHbd) * 100)
-          : (weightedShare * 100); // fallback to proportional share
+          : null;
         return {
           hp: hpVal,
           hbd: hbdVal,
@@ -998,7 +1005,7 @@
       }
     }
 
-    async function fetchHistoryWindow(client, username, days, onChunk, pageSize = 1000, useFilter = true) {
+    async function fetchHistoryWindow(client, username, days, onChunk, pageSize = 1000, useFilter = true, filterLow = HISTORY_FILTER_LOW, filterHigh = HISTORY_FILTER_HIGH) {
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
       const limit = pageSize;
       const seen = new Map();
@@ -1006,7 +1013,7 @@
 
       const fetchChunk = async (s) => {
         const params = useFilterFlag
-          ? [username, s, limit, HISTORY_FILTER_LOW, HISTORY_FILTER_HIGH]
+          ? [username, s, limit, filterLow, filterHigh]
           : [username, s, limit];
         return client.call('condenser_api', 'get_account_history', params);
       };
@@ -1033,7 +1040,8 @@
           }
         }
         if (onChunk && newOps.length) onChunk(newOps);
-        return new Date(chunk[0][1].timestamp).getTime(); // chunk[0] is oldest in this page
+        const oldest = parseHiveTime(chunk[0]?.[1]?.timestamp);
+        return oldest === null ? Number.MAX_VALUE : oldest; // chunk[0] is oldest in this page
       };
 
       const headChunk = await fetchWithFallback(-1);
@@ -1043,25 +1051,13 @@
         return Array.from(seen.values()).sort((a, b) => a[0] - b[0]);
       }
 
-      const newestTs = new Date(headChunk[headChunk.length - 1][1].timestamp).getTime();
-      const spanDays = Math.max(0.01, (newestTs - oldestTs) / (1000 * 60 * 60 * 24));
-      const perPageDays = Math.max(0.01, spanDays);
-
       let nextStart = headChunk[0][0] - 1;
-      const maxParallel = 4;
-
       while (oldestTs > cutoff && nextStart >= 0) {
-        const pagesNeeded = Math.max(1, Math.ceil((oldestTs - cutoff) / (perPageDays * 24 * 60 * 60 * 1000)));
-        const batchStarts = [];
-        for (let i = 0; i < Math.min(maxParallel, pagesNeeded) && nextStart >= 0; i++) {
-          batchStarts.push(nextStart);
-          nextStart = Math.max(0, nextStart - limit);
-        }
-        const chunks = await Promise.all(batchStarts.map(s => fetchWithFallback(s)));
-        for (const chunk of chunks) {
-          const ts = processChunk(chunk);
-          if (ts < oldestTs) oldestTs = ts;
-        }
+        const chunk = await fetchWithFallback(nextStart);
+        if (!chunk || !chunk.length) break;
+        const ts = processChunk(chunk);
+        if (ts < oldestTs) oldestTs = ts;
+        nextStart = chunk[0][0] - 1;
       }
 
       return Array.from(seen.values()).sort((a, b) => a[0] - b[0]);
