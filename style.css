@@ -339,6 +339,9 @@ th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: 0.0
 .pending-card .table-wrap {
   margin-top: 6px;
 }
+.pending-card {
+  overflow: hidden;
+}
 .table-summary {
   margin-top: 10px;
   padding: 10px 14px;
