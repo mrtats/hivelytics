@@ -1065,23 +1065,6 @@
       const rf = rewardFund || await rpc.call('condenser_api', 'get_reward_fund', ['post']);
       if (!rf) return buildZeroCurationEstimate();
 
-      const rewardBalance = assetToRational(rf.reward_balance);
-      const recentClaims = toBigIntSafe(rf.recent_claims);
-      const contentConstant = toBigIntSafe(rf.content_constant) || 0n;
-      if (!recentClaims || recentClaims <= 0n) return buildZeroCurationEstimate();
-
-      const postRshares = toBigIntSafe(content.net_rshares);
-      if (!postRshares || postRshares <= 0n) return buildZeroCurationEstimate();
-
-      const claim = makeRational(postRshares * postRshares, postRshares + contentConstant);
-      let payoutHive = mulRational(rewardBalance, claim);
-      payoutHive = divRational(payoutHive, makeRational(recentClaims, 1n));
-
-      let rewardWeightBps = toBigIntSafe(content.reward_weight);
-      if (rewardWeightBps === null) rewardWeightBps = 10000n;
-      if (rewardWeightBps <= 0n) return buildZeroCurationEstimate();
-      payoutHive = mulRational(payoutHive, makeRational(rewardWeightBps, 10000n));
-
       let priceRat = null;
       if (typeof hiveHbdPriceOverride === 'number' && Number.isFinite(hiveHbdPriceOverride) && hiveHbdPriceOverride > 0) {
         priceRat = rationalFromNumber(hiveHbdPriceOverride, 6);
@@ -1092,6 +1075,29 @@
           const quoteRat = assetToRational(pf.quote || '1.000 HIVE');
           priceRat = divRational(baseRat, quoteRat);
         }
+      }
+
+      let rewardWeightBps = toBigIntSafe(content.reward_weight);
+      if (rewardWeightBps === null) rewardWeightBps = 10000n;
+      if (rewardWeightBps <= 0n) return buildZeroCurationEstimate();
+
+      const pendingPayoutRat = assetToRational(content.pending_payout_value || '0');
+      let payoutHive = null;
+      if (pendingPayoutRat.n > 0n && priceRat && priceRat.n > 0n) {
+        payoutHive = divRational(pendingPayoutRat, priceRat);
+      } else {
+        const rewardBalance = assetToRational(rf.reward_balance);
+        const recentClaims = toBigIntSafe(rf.recent_claims);
+        const contentConstant = toBigIntSafe(rf.content_constant) || 0n;
+        if (!recentClaims || recentClaims <= 0n) return buildZeroCurationEstimate();
+
+        const postRshares = toBigIntSafe(content.net_rshares);
+        if (!postRshares || postRshares <= 0n) return buildZeroCurationEstimate();
+
+        const claim = makeRational(postRshares * postRshares, postRshares + contentConstant);
+        payoutHive = mulRational(rewardBalance, claim);
+        payoutHive = divRational(payoutHive, makeRational(recentClaims, 1n));
+        payoutHive = mulRational(payoutHive, makeRational(rewardWeightBps, 10000n));
       }
 
       if (priceRat && priceRat.n > 0n) {
@@ -1145,10 +1151,7 @@
         rshares_share_denom: rsharesShare.d.toString(),
         curation_pool_hive: `${formatRationalFixed(curationPool, 6)} HIVE`,
         post_payout_hive: `${formatRationalFixed(payoutHive, 6)} HIVE`,
-        claim_numer: claim.n.toString(),
-        claim_denom: claim.d.toString(),
         curator_rshares: curatorRshares.toString(),
-        post_rshares: postRshares.toString(),
         reward_weight_bps: rewardWeightBps.toString(),
         curation_bps: curationBps.toString()
       };

@@ -342,21 +342,9 @@ th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: 0.0
 .pending-card {
   overflow: hidden;
 }
-.table-summary {
-  margin-top: 10px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
-  align-items: center;
-  font-size: 13px;
-}
-.table-summary .summary-item {
-  color: #e5e7eb;
-  font-weight: 600;
+.pending-table {
+  border-collapse: separate;
+  border-spacing: 0;
 }
 .pending-table th, .pending-table td { white-space: nowrap; }
 .pending-table td:nth-child(2) { white-space: normal; }
@@ -373,11 +361,11 @@ th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: 0.0
   max-height: 420px;
   overflow: auto;
   position: relative;
+  background: #0f131c;
 }
 .pending-curation-table {
   width: 100%;
   table-layout: fixed;
-  border-collapse: collapse;
 }
 .pending-curation-table thead th,
 .pending-author-table thead th {
@@ -389,10 +377,11 @@ th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: 0.0
 .pending-curation-table tfoot td,
 .pending-author-table tfoot td {
   position: sticky;
-  bottom: 0;
+  bottom: -1px;
   border-top: 1px solid var(--border);
   background: #0f131c;
-  z-index: 1;
+  z-index: 3;
+  box-shadow: 0 -1px 0 var(--border), 0 -2px 0 #0f131c;
 }
 .empty {
   color: var(--muted);
