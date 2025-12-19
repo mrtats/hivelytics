@@ -167,9 +167,121 @@
       lastChartDays = null;
     }
 
-    function parseAsset(asset) {
+    function parseAssetFloat(asset) {
       if (!asset) return 0;
       return parseFloat(asset.split(' ')[0]);
+    }
+
+    function parseAsset(asset) {
+      if (!asset || typeof asset !== 'string') {
+        return { amountBigInt: 0n, symbol: '', decimals: 0 };
+      }
+      const parts = asset.trim().split(/\s+/);
+      const amountPart = parts[0] || '0';
+      const symbol = parts[1] || '';
+      const neg = amountPart.startsWith('-');
+      const clean = neg ? amountPart.slice(1) : amountPart;
+      const [whole = '0', frac = ''] = clean.split('.');
+      const decimals = frac.length;
+      const digits = `${whole}${frac}` || '0';
+      let amountBigInt = BigInt(digits);
+      if (neg) amountBigInt = -amountBigInt;
+      return { amountBigInt, symbol, decimals };
+    }
+
+    function toBigIntSafe(value) {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'bigint') return value;
+      if (typeof value === 'number') {
+        if (!Number.isFinite(value)) return null;
+        return BigInt(Math.trunc(value));
+      }
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        if (/^[+-]?\d+$/.test(trimmed)) return BigInt(trimmed);
+      }
+      return null;
+    }
+
+    function absBigInt(value) {
+      return value < 0n ? -value : value;
+    }
+
+    function gcdBigInt(a, b) {
+      let x = absBigInt(a);
+      let y = absBigInt(b);
+      while (y !== 0n) {
+        const t = x % y;
+        x = y;
+        y = t;
+      }
+      return x;
+    }
+
+    function reduceRational(r) {
+      if (!r || r.d === 0n) return { n: 0n, d: 1n };
+      let n = r.n;
+      let d = r.d;
+      if (d < 0n) {
+        n = -n;
+        d = -d;
+      }
+      const g = gcdBigInt(n, d);
+      return { n: n / g, d: d / g };
+    }
+
+    function makeRational(n, d = 1n) {
+      return reduceRational({ n, d });
+    }
+
+    function mulRational(a, b) {
+      return reduceRational({ n: a.n * b.n, d: a.d * b.d });
+    }
+
+    function divRational(a, b) {
+      if (!b || b.n === 0n) return { n: 0n, d: 1n };
+      return reduceRational({ n: a.n * b.d, d: a.d * b.n });
+    }
+
+    function compareRational(a, b) {
+      return a.n * b.d - b.n * a.d;
+    }
+
+    function pow10BigInt(exp) {
+      if (exp <= 0) return 1n;
+      return 10n ** BigInt(exp);
+    }
+
+    function assetToRational(asset) {
+      const parsed = parseAsset(asset);
+      const denom = pow10BigInt(parsed.decimals);
+      return makeRational(parsed.amountBigInt, denom);
+    }
+
+    function rationalFromNumber(value, decimals = 6) {
+      if (value === null || value === undefined || !Number.isFinite(value)) {
+        return makeRational(0n, 1n);
+      }
+      const scale = 10n ** BigInt(decimals);
+      const scaled = BigInt(Math.round(value * Number(scale)));
+      return makeRational(scaled, scale);
+    }
+
+    function formatRationalFixed(r, decimals = 3) {
+      if (!r || r.d === 0n) return `0.${'0'.repeat(decimals)}`;
+      const neg = r.n < 0n;
+      const n = neg ? -r.n : r.n;
+      const scale = 10n ** BigInt(decimals);
+      const scaled = (n * scale + r.d / 2n) / r.d;
+      const whole = scaled / scale;
+      const frac = scaled % scale;
+      return `${neg ? '-' : ''}${whole.toString()}.${frac.toString().padStart(decimals, '0')}`;
+    }
+
+    function rationalToNumber(r) {
+      if (!r || r.d === 0n) return 0;
+      return Number(r.n) / Number(r.d);
     }
 
     function format(num, digits = 2) {
@@ -203,6 +315,10 @@
       const iso = val.endsWith('Z') ? val : `${val}Z`;
       const ms = Date.parse(iso);
       return isNaN(ms) ? null : ms;
+    }
+
+    function parseTime(val) {
+      return parseHiveTime(val);
     }
 
     function renderPendingAuthor(priceFeed, pendingHp = lastPendingAuthorHp) {}
@@ -327,9 +443,9 @@
           const cashoutStr = p.cashout_time || p.payout_at || p.payout_time || '';
           const cashout = parseHiveTime(cashoutStr);
           if (!cashout || isNaN(cashout) || cashout <= Date.now()) return;
-          const maxPayout = parseAsset(p.max_accepted_payout || p.max_accepted_payout_value || '0');
+          const maxPayout = parseAssetFloat(p.max_accepted_payout || p.max_accepted_payout_value || '0');
           if (maxPayout === 0) return;
-          const pending = parseAsset(p.pending_payout_value || '0');
+          const pending = parseAssetFloat(p.pending_payout_value || '0');
           if (p.is_paidout === true) return;
           const beneficiaries = Array.isArray(p.beneficiaries) ? p.beneficiaries : [];
           const beneCut = beneficiaries.reduce((acc, b) => acc + (Number(b.weight) || 0), 0) / 10000;
@@ -378,8 +494,8 @@
         rows.sort((a, b) => (a?.payoutMs || 0) - (b?.payoutMs || 0));
 
         const price = priceFeed
-          ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
-          : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+          ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE'))
+          : (lastPriceFeed ? (parseAssetFloat(lastPriceFeed.base) / parseAssetFloat(lastPriceFeed.quote || '1.000 HIVE')) : 0);
         const hpEq = price ? (totalHbd / price) : 0;
         if (price) {
           rows.forEach(r => { r.hpEq = (r.hbd || 0) / price; });
@@ -396,7 +512,7 @@
       }
     }
 
-    async function fetchPendingCuration(client, username, priceFeed, rewardFund = lastRewardFund, requestId = activeLoadId) {
+    async function fetchPendingCuration(client, username, priceFeed, rewardFund = lastRewardFund, dgp = lastDgp, requestId = activeLoadId) {
       setPendingCurationLoading();
       lastPendingCurationHp = null;
       pendingCurationRows = [];
@@ -408,26 +524,17 @@
         return;
       }
       try {
-        const rf = rewardFund || lastRewardFund;
-        const pf = priceFeed || lastPriceFeed;
-        if (!rf || !pf) {
-          if (isStale(requestId)) return;
-          setPendingCurationValue(null, pf);
-          return;
+        let rf = rewardFund || lastRewardFund;
+        let pf = priceFeed || lastPriceFeed;
+        let dgpData = dgp || lastDgp;
+        if (!rf) {
+          rf = await client.call('condenser_api', 'get_reward_fund', ['post']).catch(() => null);
         }
-        const price = parseAsset(pf.base) / parseAsset(pf.quote || '1.000 HIVE');
-        const rewardBalance = parseAsset(rf.reward_balance);
-        const recentClaims = typeof rf.recent_claims === 'string' ? parseFloat(rf.recent_claims) : rf.recent_claims;
-        let curationPortion = 0.5;
-        if (rf.percent_curation_rewards !== undefined && rf.percent_curation_rewards !== null) {
-          curationPortion = Number(rf.percent_curation_rewards);
-          curationPortion = curationPortion > 1 ? curationPortion / 10000 : curationPortion;
+        if (!pf) {
+          pf = await client.call('condenser_api', 'get_current_median_history_price', []).catch(() => null);
         }
-        curationPortion = Math.max(0, Math.min(1, curationPortion || 0.5));
-        if (!rewardBalance || !recentClaims || !price) {
-          if (isStale(requestId)) return;
-          setPendingCurationValue(null, pf);
-          return;
+        if (!dgpData) {
+          dgpData = await client.call('condenser_api', 'get_dynamic_global_properties', []).catch(() => null);
         }
 
         const votes = await fetchAccountVotes(client, username);
@@ -461,7 +568,7 @@
         const batchSize = 6;
         for (let i = 0; i < candidates.length; i += batchSize) {
           const batch = candidates.slice(i, i + batchSize).map(v =>
-            estimateVoteCuration(client, v, rewardBalance, recentClaims, curationPortion, username, price)
+            estimateVoteCuration(client, v, username, rf, pf, dgpData)
           );
           const batchResults = await Promise.all(batch);
           batchResults.forEach(res => {
@@ -497,25 +604,25 @@
     }
 
     function vestsToHp(vests, dgp) {
-      const vestNum = typeof vests === 'string' ? parseAsset(vests) : vests;
-      const tf = parseAsset(dgp.total_vesting_fund_hive);
-      const ts = parseAsset(dgp.total_vesting_shares);
+      const vestNum = typeof vests === 'string' ? parseAssetFloat(vests) : vests;
+      const tf = parseAssetFloat(dgp.total_vesting_fund_hive);
+      const ts = parseAssetFloat(dgp.total_vesting_shares);
       if (!ts) return 0;
       return vestNum * tf / ts;
     }
 
     function getEffectiveHp(account, dgp) {
       if (!account || !dgp) return 0;
-      const vesting = parseAsset(account.vesting_shares);
-      const delegatedOut = parseAsset(account.delegated_vesting_shares);
-      const receivedVests = parseAsset(account.received_vesting_shares);
+      const vesting = parseAssetFloat(account.vesting_shares);
+      const delegatedOut = parseAssetFloat(account.delegated_vesting_shares);
+      const receivedVests = parseAssetFloat(account.received_vesting_shares);
       const effectiveVests = vesting - delegatedOut + receivedVests;
       return vestsToHp(effectiveVests, dgp);
     }
 
     function getOwnedHp(account, dgp) {
       if (!account || !dgp) return 0;
-      const vesting = parseAsset(account.vesting_shares);
+      const vesting = parseAssetFloat(account.vesting_shares);
       return vestsToHp(vesting, dgp);
     }
 
@@ -538,9 +645,9 @@
         pill.textContent = 'Curation APR —';
         return;
       }
-      const vesting = parseAsset(acct.vesting_shares);
-      const delegatedOut = parseAsset(acct.delegated_vesting_shares);
-      const receivedVests = parseAsset(acct.received_vesting_shares);
+      const vesting = parseAssetFloat(acct.vesting_shares);
+      const delegatedOut = parseAssetFloat(acct.delegated_vesting_shares);
+      const receivedVests = parseAssetFloat(acct.received_vesting_shares);
       const effectiveVests = vesting - delegatedOut + receivedVests;
       const effectiveHp = vestsToHp(effectiveVests, dgpVal);
       const curation30 = totals['30']?.curation?.hp || 0;
@@ -557,8 +664,8 @@
 
     function updateAnalytics(totals, priceFeed, account, dgp) {
       const price = priceFeed
-        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
-        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 1);
+        ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAssetFloat(lastPriceFeed.base) / parseAssetFloat(lastPriceFeed.quote || '1.000 HIVE')) : 1);
 
       const setVal = (id, text) => {
         const el = document.getElementById(id);
@@ -597,7 +704,7 @@
         ? (dgpVal.current_hbd_interest_rate ?? dgpVal.hbd_interest_rate ?? 0)
         : 0;
       const interestRate = (parseFloat(rateRaw) || 0) / 10000;
-      const hbdBalance = acct ? (parseAsset(acct.hbd_balance) + parseAsset(acct.savings_hbd_balance)) : 0;
+      const hbdBalance = acct ? (parseAssetFloat(acct.hbd_balance) + parseAssetFloat(acct.savings_hbd_balance)) : 0;
       if (!acct || !interestRate || !hbdBalance) {
         setVal('analyticsInterest', '—');
       } else {
@@ -662,7 +769,7 @@
         renderAccount(account, dgp, rewardFund, priceFeed, rcAccount, profile);
 
         fetchPendingAuthor(client, username, priceFeed, requestId);
-        fetchPendingCuration(client, username, priceFeed, rewardFund, requestId);
+        fetchPendingCuration(client, username, priceFeed, rewardFund, dgp, requestId);
         fetchRewards(client, username, dgp, priceFeed, account, requestId);
 
         syncUrlUsername(username);
@@ -742,9 +849,9 @@
     function renderAccount(account, dgp, rewardFund, priceFeed, rcAccount = null, profile = null) {
       lastAccount = account;
       lastDgp = dgp;
-      const ownVests = parseAsset(account.vesting_shares);
-      const delegatedOut = parseAsset(account.delegated_vesting_shares);
-      const received = parseAsset(account.received_vesting_shares);
+      const ownVests = parseAssetFloat(account.vesting_shares);
+      const delegatedOut = parseAssetFloat(account.delegated_vesting_shares);
+      const received = parseAssetFloat(account.received_vesting_shares);
       const ownHp = vestsToHp(ownVests - delegatedOut, dgp);
       const receivedHp = vestsToHp(received, dgp);
       const delegatedHp = vestsToHp(delegatedOut, dgp);
@@ -768,15 +875,15 @@
     }
 
     function renderStakeStats(account, dgp, rcAccount = null) {
-      const vesting = parseAsset(account.vesting_shares);
-      const delegatedOut = parseAsset(account.delegated_vesting_shares);
-      const receivedVests = parseAsset(account.received_vesting_shares);
+      const vesting = parseAssetFloat(account.vesting_shares);
+      const delegatedOut = parseAssetFloat(account.delegated_vesting_shares);
+      const receivedVests = parseAssetFloat(account.received_vesting_shares);
       const effectiveVests = vesting - delegatedOut + receivedVests;
       const totalHp = vestsToHp(vesting, dgp);
       const effectiveHp = vestsToHp(effectiveVests, dgp);
       const receivedHp = vestsToHp(receivedVests, dgp);
       const delegatedHp = vestsToHp(delegatedOut, dgp);
-      const powerDownHp = vestsToHp(parseAsset(account.vesting_withdraw_rate), dgp);
+      const powerDownHp = vestsToHp(parseAssetFloat(account.vesting_withdraw_rate), dgp);
 
       const rcSource = rcAccount || {};
       const rcMana = rcSource.rc_manabar || {};
@@ -808,7 +915,7 @@
           sevenDayStart: todayStartUtc - 6 * msInDay,
           thirtyDayStart: todayStartUtc - 29 * msInDay,
         };
-        const price = priceFeed ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE')) : 1;
+        const price = priceFeed ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE')) : 1;
         const dayInfo = buildDayBuckets();
         const dayKeySet = new Set(dayInfo.map(d => d.key));
         const totals = initRewardBuckets(dayInfo);
@@ -833,27 +940,27 @@
           const [type, op] = item.op;
 
           if (type === 'author_reward') {
-            const hp = vestsToHp(parseAsset(op.vesting_payout), dgp);
-            const hive = parseAsset(op.hive_payout);
-            const hbd = parseAsset(op.hbd_payout);
+            const hp = vestsToHp(parseAssetFloat(op.vesting_payout), dgp);
+            const hive = parseAssetFloat(op.hive_payout);
+            const hbd = parseAssetFloat(op.hbd_payout);
             addRewardBucket(totals, 'author', ageDays, ts, dayName, hive, hbd, hp, price, dayKeySet, rangeCutoffs);
             addChartBucket(chartBuckets, chartDaySet, ts, hive, hbd, hp, 'author');
           } else if (type === 'curation_reward') {
-            const hp = vestsToHp(parseAsset(op.reward), dgp);
+            const hp = vestsToHp(parseAssetFloat(op.reward), dgp);
             addRewardBucket(totals, 'curation', ageDays, ts, dayName, 0, 0, hp, price, dayKeySet, rangeCutoffs);
             addChartBucket(chartBuckets, chartDaySet, ts, 0, 0, hp, 'curation');
           } else if (type === 'producer_reward') {
-            const hp = vestsToHp(parseAsset(op.vesting_shares), dgp);
+            const hp = vestsToHp(parseAssetFloat(op.vesting_shares), dgp);
             addRewardBucket(totals, 'witness', ageDays, ts, dayName, 0, 0, hp, price, dayKeySet, rangeCutoffs);
             addChartBucket(chartBuckets, chartDaySet, ts, 0, 0, hp, 'witness');
           } else if (type === 'transfer_to_vesting') {
             if (op.to === username) {
-              const hiveAmt = parseAsset(op.amount);
+              const hiveAmt = parseAssetFloat(op.amount);
               addHpDelta(chartBuckets, chartDaySet, ts, hiveAmt);
             }
           } else if (type === 'fill_vesting_withdraw') {
             if (op.from_account === username) {
-              const withdrawnVests = parseAsset(op.withdrawn);
+              const withdrawnVests = parseAssetFloat(op.withdrawn);
               const hpDown = -vestsToHp(withdrawnVests, dgp);
               addHpDelta(chartBuckets, chartDaySet, ts, hpDown);
               if (op.to_account && op.to_account !== username) {
@@ -865,12 +972,12 @@
             }
           } else if (type === 'return_vesting_delegation') {
             if (op.account === username) {
-              const hpGain = vestsToHp(parseAsset(op.vesting_shares), dgp);
+              const hpGain = vestsToHp(parseAssetFloat(op.vesting_shares), dgp);
               addHpDelta(chartBuckets, chartDaySet, ts, hpGain);
             }
           } else if (type === 'comment_benefactor_reward') {
             if (op.benefactor === username) {
-              const hp = vestsToHp(parseAsset(op.vesting_payout), dgp);
+              const hp = vestsToHp(parseAssetFloat(op.vesting_payout), dgp);
               addChartBucket(chartBuckets, chartDaySet, ts, 0, 0, hp, 'benefactor');
             }
           }
@@ -906,16 +1013,226 @@
       return { author: '', permlink: '' };
     }
 
-    function curationWeightFactor(voteTimeMs, createdMs) {
-      if (!createdMs || !voteTimeMs) return 1;
-      const delta = Math.max(0, voteTimeMs - createdMs);
-      const dayMs = 24 * 60 * 60 * 1000;
-      if (delta <= dayMs) return 1;
-      if (delta <= 3 * dayMs) return 0.5;
-      return 0.125;
+    function buildZeroCurationEstimate() {
+      return {
+        estimated_vests: '0.000 VESTS',
+        estimated_hp: '0.000 HP',
+        share_numer: '0',
+        share_denom: '1',
+        rshares_share_numer: '0',
+        rshares_share_denom: '1',
+        curation_pool_hive: '0.000000 HIVE',
+        post_payout_hive: '0.000000 HIVE'
+      };
     }
 
-    async function estimateVoteCuration(client, vote, rewardBalance, recentClaims, curationPortion, username, price) {
+    async function estimatePendingCurationReward(params) {
+      const {
+        rpc,
+        author,
+        permlink,
+        curator,
+        hiveHbdPriceOverride,
+        rewardFund = null,
+        priceFeed = null,
+        dgp = null,
+        content: contentOverride = null,
+        activeVotes: votesOverride = null
+      } = params || {};
+
+      if (!rpc || !author || !permlink || !curator) return buildZeroCurationEstimate();
+
+      const content = contentOverride || await rpc.call('condenser_api', 'get_content', [author, permlink]);
+      if (!content) return buildZeroCurationEstimate();
+      if (content.allow_curation_rewards === false) return buildZeroCurationEstimate();
+
+      const cashoutMs = parseTime(content.cashout_time);
+      if (!cashoutMs || cashoutMs <= Date.now()) return buildZeroCurationEstimate();
+
+      const maxPayout = parseAsset(content.max_accepted_payout);
+      if (maxPayout.amountBigInt <= 0n) return buildZeroCurationEstimate();
+
+      const activeVotes = (Array.isArray(content.active_votes) && content.active_votes.length)
+        ? content.active_votes
+        : (votesOverride || await rpc.call('condenser_api', 'get_active_votes', [author, permlink]));
+
+      if (!Array.isArray(activeVotes) || !activeVotes.length) return buildZeroCurationEstimate();
+
+      const curatorVote = activeVotes.find(v => v.voter === curator);
+      const curatorRshares = toBigIntSafe(curatorVote?.rshares);
+      if (!curatorRshares || curatorRshares <= 0n) return buildZeroCurationEstimate();
+
+      const rf = rewardFund || await rpc.call('condenser_api', 'get_reward_fund', ['post']);
+      if (!rf) return buildZeroCurationEstimate();
+
+      const rewardBalance = assetToRational(rf.reward_balance);
+      const recentClaims = toBigIntSafe(rf.recent_claims);
+      const contentConstant = toBigIntSafe(rf.content_constant) || 0n;
+      if (!recentClaims || recentClaims <= 0n) return buildZeroCurationEstimate();
+
+      const postRshares = toBigIntSafe(content.net_rshares);
+      if (!postRshares || postRshares <= 0n) return buildZeroCurationEstimate();
+
+      const claim = makeRational(postRshares * postRshares, postRshares + contentConstant);
+      let payoutHive = mulRational(rewardBalance, claim);
+      payoutHive = divRational(payoutHive, makeRational(recentClaims, 1n));
+
+      let rewardWeightBps = toBigIntSafe(content.reward_weight);
+      if (rewardWeightBps === null) rewardWeightBps = 10000n;
+      if (rewardWeightBps <= 0n) return buildZeroCurationEstimate();
+      payoutHive = mulRational(payoutHive, makeRational(rewardWeightBps, 10000n));
+
+      let priceRat = null;
+      if (typeof hiveHbdPriceOverride === 'number' && Number.isFinite(hiveHbdPriceOverride) && hiveHbdPriceOverride > 0) {
+        priceRat = rationalFromNumber(hiveHbdPriceOverride, 6);
+      } else {
+        const pf = priceFeed || await rpc.call('condenser_api', 'get_current_median_history_price', []);
+        if (pf?.base) {
+          const baseRat = assetToRational(pf.base);
+          const quoteRat = assetToRational(pf.quote || '1.000 HIVE');
+          priceRat = divRational(baseRat, quoteRat);
+        }
+      }
+
+      if (priceRat && priceRat.n > 0n) {
+        const maxPayoutRat = assetToRational(content.max_accepted_payout);
+        const maxPayoutHive = divRational(maxPayoutRat, priceRat);
+        if (compareRational(payoutHive, maxPayoutHive) > 0n) {
+          payoutHive = maxPayoutHive;
+        }
+      }
+
+      const curationBps = toBigIntSafe(rf.percent_curation_rewards) ?? 5000n;
+      const curationPool = mulRational(payoutHive, makeRational(curationBps, 10000n));
+
+      let totalPositiveRshares = 0n;
+      for (const vote of activeVotes) {
+        const rs = toBigIntSafe(vote?.rshares);
+        if (rs && rs > 0n) totalPositiveRshares += rs;
+      }
+
+      const voteWeight = toBigIntSafe(curatorVote?.weight);
+      const totalVoteWeight = toBigIntSafe(content.total_vote_weight);
+      let share = makeRational(0n, 1n);
+      if (voteWeight && voteWeight > 0n && totalVoteWeight && totalVoteWeight > 0n) {
+        share = makeRational(voteWeight, totalVoteWeight);
+      } else {
+        if (totalPositiveRshares <= 0n) return buildZeroCurationEstimate();
+        share = makeRational(curatorRshares, totalPositiveRshares);
+      }
+
+      if (share.n <= 0n || share.d <= 0n) return buildZeroCurationEstimate();
+
+      const estCurationHive = mulRational(curationPool, share);
+
+      const dgpData = dgp || await rpc.call('condenser_api', 'get_dynamic_global_properties', []);
+      if (!dgpData) return buildZeroCurationEstimate();
+
+      const totalVestingFund = assetToRational(dgpData.total_vesting_fund_hive);
+      const totalVestingShares = assetToRational(dgpData.total_vesting_shares);
+      const hivePerVest = divRational(totalVestingFund, totalVestingShares);
+      const estVests = divRational(estCurationHive, hivePerVest);
+      const estHp = mulRational(estVests, hivePerVest);
+
+      const rsharesShare = totalPositiveRshares > 0n ? makeRational(curatorRshares, totalPositiveRshares) : makeRational(0n, 1n);
+
+      const output = {
+        estimated_vests: `${formatRationalFixed(estVests, 3)} VESTS`,
+        estimated_hp: `${formatRationalFixed(estHp, 3)} HP`,
+        share_numer: share.n.toString(),
+        share_denom: share.d.toString(),
+        rshares_share_numer: rsharesShare.n.toString(),
+        rshares_share_denom: rsharesShare.d.toString(),
+        curation_pool_hive: `${formatRationalFixed(curationPool, 6)} HIVE`,
+        post_payout_hive: `${formatRationalFixed(payoutHive, 6)} HIVE`,
+        claim_numer: claim.n.toString(),
+        claim_denom: claim.d.toString(),
+        curator_rshares: curatorRshares.toString(),
+        post_rshares: postRshares.toString(),
+        reward_weight_bps: rewardWeightBps.toString(),
+        curation_bps: curationBps.toString()
+      };
+
+      if (priceRat && priceRat.n > 0n) {
+        const estHbd = mulRational(estCurationHive, priceRat);
+        output.estimated_hbd = `${formatRationalFixed(estHbd, 3)} HBD`;
+      }
+
+      return output;
+    }
+
+    async function fetchActualCurationReward(params) {
+      const {
+        rpc,
+        author,
+        permlink,
+        curator,
+        dgp = null,
+        maxLookbackDays = 30
+      } = params || {};
+
+      if (!rpc || !author || !permlink || !curator) return null;
+
+      const content = await rpc.call('condenser_api', 'get_content', [author, permlink]);
+      if (!content) return null;
+      const cashoutMs = parseTime(content.cashout_time);
+      if (!cashoutMs || cashoutMs > Date.now()) return null;
+
+      const cutoff = maxLookbackDays ? (Date.now() - maxLookbackDays * 24 * 60 * 60 * 1000) : null;
+      const filterLow = (1n << 52n).toString();
+      const filterHigh = '0';
+      const limit = 1000;
+      let start = -1;
+      let pages = 0;
+      let found = null;
+
+      while (pages < 20 && start >= -1) {
+        const chunk = await rpc.call('condenser_api', 'get_account_history', [curator, start, limit, filterLow, filterHigh]);
+        if (!chunk || !chunk.length) break;
+        for (let i = chunk.length - 1; i >= 0; i -= 1) {
+          const [, item] = chunk[i];
+          const ts = parseTime(item?.timestamp);
+          if (cutoff && ts && ts < cutoff) {
+            pages = 999;
+            break;
+          }
+          const opEntry = item?.op;
+          const type = Array.isArray(opEntry) ? opEntry[0] : null;
+          const op = Array.isArray(opEntry) ? opEntry[1] : opEntry;
+          if (type !== 'curation_reward' || !op) continue;
+          if (op.comment_author === author && op.comment_permlink === permlink) {
+            found = { op, timestamp: item.timestamp };
+            break;
+          }
+        }
+        if (found || chunk[0][0] <= 0) break;
+        start = chunk[0][0] - 1;
+        pages += 1;
+      }
+
+      if (!found) return null;
+
+      const dgpData = dgp || await rpc.call('condenser_api', 'get_dynamic_global_properties', []);
+      if (!dgpData) return null;
+
+      const rewardVests = assetToRational(found.op.reward);
+      const totalVestingFund = assetToRational(dgpData.total_vesting_fund_hive);
+      const totalVestingShares = assetToRational(dgpData.total_vesting_shares);
+      const hivePerVest = divRational(totalVestingFund, totalVestingShares);
+      const rewardHp = mulRational(rewardVests, hivePerVest);
+
+      return {
+        reward_vests: `${formatRationalFixed(rewardVests, 3)} VESTS`,
+        reward_hp: `${formatRationalFixed(rewardHp, 3)} HP`,
+        reward_raw: found.op.reward,
+        timestamp: found.timestamp,
+        author,
+        permlink,
+        curator
+      };
+    }
+
+    async function estimateVoteCuration(client, vote, username, rewardFund, priceFeed, dgp) {
       if (!vote) return 0;
       if ((vote.percent || 0) <= 0) return 0;
       try {
@@ -925,77 +1242,65 @@
         if (!content) return 0;
         if (content.allow_curation_rewards === false) return 0;
         const maxPayout = parseAsset(content.max_accepted_payout);
-        if (maxPayout === 0) return 0;
-        const cashout = parseHiveTime(content.cashout_time);
+        if (maxPayout.amountBigInt <= 0n) return 0;
+        const cashout = parseTime(content.cashout_time);
         if (!cashout || isNaN(cashout) || cashout <= Date.now()) return 0;
-        const createdMs = parseHiveTime(content.created) || null;
-        const postRshares = Math.max(0, Number(content.net_rshares || 0));
-        if (!postRshares || postRshares <= 0) return 0;
+
         const activeVotes = (Array.isArray(content.active_votes) && content.active_votes.length)
           ? content.active_votes
           : await client.call('condenser_api', 'get_active_votes', [author, permlink]);
-        let voteRshares = 0;
-        let totalVoteRshares = 0;
-        let voteTimeMs = null;
+
+        const estimate = await estimatePendingCurationReward({
+          rpc: client,
+          author,
+          permlink,
+          curator: username,
+          rewardFund,
+          priceFeed,
+          dgp,
+          content,
+          activeVotes
+        });
+
+        const hpVal = parseAssetFloat(estimate.estimated_hp);
+        if (!hpVal || hpVal <= 0) return 0;
+        const hbdVal = estimate.estimated_hbd ? parseAssetFloat(estimate.estimated_hbd) : 0;
+
+        const createdMs = parseTime(content.created) || null;
+        const voteInfo = Array.isArray(activeVotes) ? activeVotes.find(v => v.voter === username) : null;
+        const voteTimeMs = voteInfo?.time ? parseTime(voteInfo.time) : (vote.timestamp ? parseTime(vote.timestamp) : null);
+        const votedAfterMs = createdMs && voteTimeMs ? Math.max(0, voteTimeMs - createdMs) : null;
+
         let votePercent = Number(vote.weight || vote.percent || 0);
-        let totalWeightedRshares = 0;
-        let voteWeightedRshares = 0;
-        if (Array.isArray(activeVotes) && activeVotes.length) {
-          for (const av of activeVotes) {
-            const rs = Math.max(0, Number(av.rshares || 0));
-            totalVoteRshares += rs;
-            const avTime = parseHiveTime(av.time) || null;
-            const factor = curationWeightFactor(avTime, createdMs);
-            totalWeightedRshares += rs * factor;
-            if (av.voter === username) {
-              voteRshares = rs;
-              voteTimeMs = parseHiveTime(av.time) || voteTimeMs;
-              votePercent = Number(av.percent || votePercent || 0);
-              voteWeightedRshares = rs * factor;
-            }
+        if (voteInfo && voteInfo.percent !== undefined && voteInfo.percent !== null) {
+          votePercent = Number(voteInfo.percent);
+        }
+
+        let efficiency = null;
+        const shareNumer = toBigIntSafe(estimate.share_numer);
+        const shareDenom = toBigIntSafe(estimate.share_denom);
+        const baseNumer = toBigIntSafe(estimate.rshares_share_numer);
+        const baseDenom = toBigIntSafe(estimate.rshares_share_denom);
+        if (shareNumer && shareDenom && shareDenom > 0n) {
+          if (baseNumer && baseDenom && baseDenom > 0n) {
+            const effRat = divRational(makeRational(shareNumer, shareDenom), makeRational(baseNumer, baseDenom));
+            efficiency = rationalToNumber(mulRational(effRat, makeRational(100n, 1n)));
+          } else {
+            efficiency = 100;
           }
         }
-        if (!voteRshares && vote.rshares) {
-          voteRshares = Math.max(0, Number(vote.rshares));
-        }
-        if (!voteRshares || voteRshares <= 0) return 0;
-        if (!voteTimeMs && vote.timestamp) {
-          voteTimeMs = parseHiveTime(vote.timestamp) || null;
-        }
-        const priceBase = price || 0;
-        const shareOfPost = voteRshares && postRshares
-          ? (voteRshares / postRshares)
-          : 0;
-        const weightedShare = voteWeightedRshares && totalWeightedRshares
-          ? (voteWeightedRshares / totalWeightedRshares)
-          : (voteRshares && totalVoteRshares ? (voteRshares / totalVoteRshares) : shareOfPost);
-        const safeShare = isFinite(weightedShare) && weightedShare > 0 ? weightedShare : 0;
-        if (!safeShare) return 0;
-        const isComment = !!content.parent_author;
 
-        const postPayoutHive = recentClaims ? ((postRshares / recentClaims) * rewardBalance) : 0;
-        const curationPoolHive = postPayoutHive * curationPortion;
-        const hpVal = curationPoolHive * safeShare;
-        const hbdVal = hpVal * priceBase;
-        const payoutMs = cashout - Date.now();
-        const votedAfterMs = createdMs && voteTimeMs ? Math.max(0, voteTimeMs - createdMs) : null;
-        const baselinePotentialHbd = totalVoteRshares > 0
-          ? ((curationPoolHive * (voteRshares / totalVoteRshares)) * priceBase)
-          : 0;
-        const efficiency = baselinePotentialHbd > 0 && hbdVal > 0
-          ? Math.max(0, (hbdVal / baselinePotentialHbd) * 100)
-          : null;
         return {
           hp: hpVal,
           hbd: hbdVal,
           author,
           permlink,
           title: content.title || `${author}/${permlink}`,
-          payoutMs,
+          payoutMs: cashout - Date.now(),
           votedAfterMs,
           weightPct: (votePercent || 0) / 100,
-          efficiency: efficiency,
-          isComment
+          efficiency,
+          isComment: !!content.parent_author
         };
       } catch (err) {
         if (isHivemindUnsupported(err)) {
@@ -1070,7 +1375,7 @@
         const VOTE_REGEN_SECONDS = 5 * 24 * 60 * 60;
         const weight = weightPct * 100;
 
-        const effectiveVests = parseAsset(account.vesting_shares) - parseAsset(account.delegated_vesting_shares) + parseAsset(account.received_vesting_shares);
+        const effectiveVests = parseAssetFloat(account.vesting_shares) - parseAssetFloat(account.delegated_vesting_shares) + parseAssetFloat(account.received_vesting_shares);
         const fallbackMaxMana = effectiveVests * 1e6;
         const maxMana = Number(account.voting_manabar?.max_mana) || fallbackMaxMana;
         const currentManaBase = Number(account.voting_manabar?.current_mana) || maxMana;
@@ -1085,12 +1390,12 @@
         // rshares derived from max mana (value constant as long as mana available)
         const rshares = maxMana * 0.02 * (weight / 10000);
 
-        const rewardBalance = parseAsset(rewardFund.reward_balance);
+        const rewardBalance = parseAssetFloat(rewardFund.reward_balance);
         const recentClaims = typeof rewardFund.recent_claims === 'string' ? parseFloat(rewardFund.recent_claims) : rewardFund.recent_claims;
         if (!recentClaims || !rewardBalance) return null;
         const hiveValue = (rshares / recentClaims) * rewardBalance;
 
-        const price = parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE');
+        const price = parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE');
         const hbdValue = hiveValue * price;
 
         return { hive: format(hiveValue, 3), hbd: format(hbdValue, 3), lowMana, weight: weightPct };
@@ -1108,7 +1413,7 @@
         lastTotals = null;
         return;
       }
-      const price = priceFeed ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE')) : 1;
+      const price = priceFeed ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE')) : 1;
       const now = new Date();
       const nowMs = now.getTime();
       const msInDay = 24 * 60 * 60 * 1000;
@@ -1139,15 +1444,15 @@
         const [type, op] = item.op;
 
         if (type === 'author_reward') {
-          const hp = vestsToHp(parseAsset(op.vesting_payout), dgp);
-          const hive = parseAsset(op.hive_payout);
-          const hbd = parseAsset(op.hbd_payout);
+          const hp = vestsToHp(parseAssetFloat(op.vesting_payout), dgp);
+          const hive = parseAssetFloat(op.hive_payout);
+          const hbd = parseAssetFloat(op.hbd_payout);
           addRewardBucket(totals, 'author', ageDays, ts, dayName, hive, hbd, hp, price, dayKeySet, rangeCutoffs);
         } else if (type === 'curation_reward') {
-          const hp = vestsToHp(parseAsset(op.reward), dgp);
+          const hp = vestsToHp(parseAssetFloat(op.reward), dgp);
           addRewardBucket(totals, 'curation', ageDays, ts, dayName, 0, 0, hp, price, dayKeySet, rangeCutoffs);
         } else if (type === 'producer_reward') {
-          const hp = vestsToHp(parseAsset(op.vesting_shares), dgp);
+          const hp = vestsToHp(parseAssetFloat(op.vesting_shares), dgp);
           addRewardBucket(totals, 'witness', ageDays, ts, dayName, 0, 0, hp, price, dayKeySet, rangeCutoffs);
         }
       }
@@ -1297,8 +1602,8 @@
       }
       const sorted = [...rows].sort((a, b) => (b.hbd || 0) - (a.hbd || 0));
       const price = priceFeed
-        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
-        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+        ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAssetFloat(lastPriceFeed.base) / parseAssetFloat(lastPriceFeed.quote || '1.000 HIVE')) : 0);
       tbody.innerHTML = '';
       sorted.forEach(row => {
         const payoutIn = formatDuration(row.payoutMs);
@@ -1360,8 +1665,8 @@
         return;
       }
       const price = priceFeed
-        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
-        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+        ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAssetFloat(lastPriceFeed.base) / parseAssetFloat(lastPriceFeed.quote || '1.000 HIVE')) : 0);
       const posts = rows.filter(r => !r.isComment).length;
       const comments = rows.length - posts;
       const totalHbd = rows.reduce((acc, r) => acc + (r.hbd || 0), 0);
@@ -1388,8 +1693,8 @@
         return;
       }
       const price = priceFeed
-        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
-        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+        ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAssetFloat(lastPriceFeed.base) / parseAssetFloat(lastPriceFeed.quote || '1.000 HIVE')) : 0);
       tbody.innerHTML = '';
       rows.forEach(row => {
         const payoutIn = formatDuration(row.payoutMs);
@@ -1466,8 +1771,8 @@
         return;
       }
       const price = priceFeed
-        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
-        : (lastPriceFeed ? (parseAsset(lastPriceFeed.base) / parseAsset(lastPriceFeed.quote || '1.000 HIVE')) : 0);
+        ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE'))
+        : (lastPriceFeed ? (parseAssetFloat(lastPriceFeed.base) / parseAssetFloat(lastPriceFeed.quote || '1.000 HIVE')) : 0);
       const posts = rows.filter(r => !r.isComment).length;
       const comments = rows.length - posts;
       const totalHbd = rows.reduce((acc, r) => acc + (r.hbd || 0), 0);
@@ -1585,7 +1890,7 @@
     function renderCharts(chartMap, chartDays, priceFeed, rangeDays = 30, account = null, dgp = null) {
       if (!window.Chart) return;
       const price = priceFeed
-        ? (parseAsset(priceFeed.base) / parseAsset(priceFeed.quote || '1.000 HIVE'))
+        ? (parseAssetFloat(priceFeed.base) / parseAssetFloat(priceFeed.quote || '1.000 HIVE'))
         : 1;
       const sliceDays = chartDays.slice(-Math.max(1, rangeDays));
       const labels = sliceDays.map(d => d.label);
