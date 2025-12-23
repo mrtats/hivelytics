@@ -28,9 +28,9 @@
     let earnedChart = null;
     let lastChartBuckets = null;
     let lastChartDays = null;
-    const HISTORY_FILTER_LOW = ((1n << 51n) | (1n << 52n)).toString(); // author_reward (51), curation_reward (52)
-    const HISTORY_FILTER_HIGH = (1n << 0n).toString(); // producer_reward (64 -> bit 0 of high)
-    const VOTE_FILTER_LOW = (1n << 0n).toString(); // vote op id 0
+    const HISTORY_FILTER_LOW = ((1n << 51n) | (1n << 52n)).toString();
+    const HISTORY_FILTER_HIGH = (1n << 0n).toString();
+    const VOTE_FILTER_LOW = (1n << 0n).toString();
     const VOTE_FILTER_HIGH = '0';
     const PENDING_CURATION_LOOKBACK_DAYS = 10;
 
@@ -481,10 +481,9 @@
           });
         };
 
-        // Prefer Hivemind bridge (supports posts + comments), fall back to condenser.
         const fetchBridge = async (sort) => {
-          const limit = 20; // bridge enforces max 20
-          const maxPages = 30; // up to ~600 items per type
+          const limit = 20;
+          const maxPages = 30;
           let start_author = null;
           let start_permlink = null;
           for (let page = 0; page < maxPages; page++) {
@@ -544,9 +543,6 @@
         let rf = rewardFund || lastRewardFund;
         let pf = priceFeed || lastPriceFeed;
         let dgpData = dgp || lastDgp;
-        if (!rf) {
-          rf = await client.call('condenser_api', 'get_reward_fund', ['post']).catch(() => null);
-        }
         if (!pf) {
           pf = await client.call('condenser_api', 'get_current_median_history_price', []).catch(() => null);
         }
@@ -904,7 +900,7 @@
 
       const rcSource = rcAccount || {};
       const rcMana = rcSource.rc_manabar || {};
-      const rcFallback = Math.max(0, effectiveVests * 1e6); // RC max ~= effective vests * 1e6 when plugin omits it
+      const rcFallback = Math.max(0, effectiveVests * 1e6);
       const maxRc = Number((rcSource && rcSource.max_rc) || rcFallback);
       const rcCurrentBase = rcMana && rcMana.current_mana !== undefined ? Number(rcMana.current_mana) : rcFallback;
       const rcCurrent = maxRc ? Math.min(maxRc, rcCurrentBase) : rcCurrentBase;
@@ -983,9 +979,6 @@
               if (op.to_account && op.to_account !== username) {
                 addPowerDownTo(chartBuckets, chartDaySet, ts, Math.abs(hpDown));
               }
-            }
-            if (op.to_account === username && op.deposited) {
-              // Power-down to another account counts as loss of HP; already handled in from_account.
             }
           } else if (type === 'return_vesting_delegation') {
             if (op.account === username) {
@@ -1079,9 +1072,6 @@
       const curatorRshares = toBigIntSafe(curatorVote?.rshares);
       if (!curatorRshares || curatorRshares <= 0n) return buildZeroCurationEstimate();
 
-      const rf = rewardFund || await rpc.call('condenser_api', 'get_reward_fund', ['post']);
-      if (!rf) return buildZeroCurationEstimate();
-
       let priceRat = null;
       if (typeof hiveHbdPriceOverride === 'number' && Number.isFinite(hiveHbdPriceOverride) && hiveHbdPriceOverride > 0) {
         priceRat = rationalFromNumber(hiveHbdPriceOverride, 6);
@@ -1093,40 +1083,17 @@
           priceRat = divRational(baseRat, quoteRat);
         }
       }
+      if (!priceRat || priceRat.n <= 0n) return buildZeroCurationEstimate();
 
       let rewardWeightBps = toBigIntSafe(content.reward_weight);
       if (rewardWeightBps === null) rewardWeightBps = 10000n;
       if (rewardWeightBps <= 0n) return buildZeroCurationEstimate();
 
       const pendingPayoutRat = assetToRational(content.pending_payout_value || '0');
-      let payoutHive = null;
-      if (pendingPayoutRat.n > 0n && priceRat && priceRat.n > 0n) {
-        payoutHive = divRational(pendingPayoutRat, priceRat);
-      } else {
-        const rewardBalance = assetToRational(rf.reward_balance);
-        const recentClaims = toBigIntSafe(rf.recent_claims);
-        const contentConstant = toBigIntSafe(rf.content_constant) || 0n;
-        if (!recentClaims || recentClaims <= 0n) return buildZeroCurationEstimate();
+      if (pendingPayoutRat.n <= 0n) return buildZeroCurationEstimate();
 
-        const postRshares = toBigIntSafe(content.net_rshares);
-        if (!postRshares || postRshares <= 0n) return buildZeroCurationEstimate();
-
-        const claim = makeRational(postRshares * postRshares, postRshares + contentConstant);
-        payoutHive = mulRational(rewardBalance, claim);
-        payoutHive = divRational(payoutHive, makeRational(recentClaims, 1n));
-        payoutHive = mulRational(payoutHive, makeRational(rewardWeightBps, 10000n));
-      }
-
-      if (priceRat && priceRat.n > 0n) {
-        const maxPayoutRat = assetToRational(content.max_accepted_payout);
-        const maxPayoutHive = divRational(maxPayoutRat, priceRat);
-        if (compareRational(payoutHive, maxPayoutHive) > 0n) {
-          payoutHive = maxPayoutHive;
-        }
-      }
-
-      const curationBps = toBigIntSafe(rf.percent_curation_rewards) ?? 5000n;
-      const curationPool = mulRational(payoutHive, makeRational(curationBps, 10000n));
+      const curationBps = toBigIntSafe(rewardFund?.percent_curation_rewards) ?? 5000n;
+      const curationPoolHbd = mulRational(pendingPayoutRat, makeRational(curationBps, 10000n));
 
       let totalPositiveRshares = 0n;
       for (const vote of activeVotes) {
@@ -1146,7 +1113,8 @@
 
       if (share.n <= 0n || share.d <= 0n) return buildZeroCurationEstimate();
 
-      const estCurationHive = mulRational(curationPool, share);
+      const estCurationHbd = mulRational(curationPoolHbd, share);
+      const estCurationHive = divRational(estCurationHbd, priceRat);
 
       const dgpData = dgp || await rpc.call('condenser_api', 'get_dynamic_global_properties', []);
       if (!dgpData) return buildZeroCurationEstimate();
@@ -1159,6 +1127,8 @@
 
       const rsharesShare = totalPositiveRshares > 0n ? makeRational(curatorRshares, totalPositiveRshares) : makeRational(0n, 1n);
 
+      const payoutHive = divRational(pendingPayoutRat, priceRat);
+      const curationPoolHive = divRational(curationPoolHbd, priceRat);
       const output = {
         estimated_vests: `${formatRationalFixed(estVests, 3)} VESTS`,
         estimated_hp: `${formatRationalFixed(estHp, 3)} HP`,
@@ -1166,17 +1136,14 @@
         share_denom: share.d.toString(),
         rshares_share_numer: rsharesShare.n.toString(),
         rshares_share_denom: rsharesShare.d.toString(),
-        curation_pool_hive: `${formatRationalFixed(curationPool, 6)} HIVE`,
+        curation_pool_hive: `${formatRationalFixed(curationPoolHive, 6)} HIVE`,
         post_payout_hive: `${formatRationalFixed(payoutHive, 6)} HIVE`,
         curator_rshares: curatorRshares.toString(),
         reward_weight_bps: rewardWeightBps.toString(),
         curation_bps: curationBps.toString()
       };
 
-      if (priceRat && priceRat.n > 0n) {
-        const estHbd = mulRational(estCurationHive, priceRat);
-        output.estimated_hbd = `${formatRationalFixed(estHbd, 3)} HBD`;
-      }
+      output.estimated_hbd = `${formatRationalFixed(estCurationHbd, 3)} HBD`;
 
       return output;
     }
@@ -1366,7 +1333,7 @@
         }
         if (onChunk && newOps.length) onChunk(newOps);
         const oldest = parseHiveTime(chunk[0]?.[1]?.timestamp);
-        return oldest === null ? Number.MAX_VALUE : oldest; // chunk[0] is oldest in this page
+        return oldest === null ? Number.MAX_VALUE : oldest;
       };
 
       const headChunk = await fetchWithFallback(-1);
@@ -1389,7 +1356,6 @@
     }
 
     function computeVoteValue(account, dgp, rewardFund, priceFeed, weightPct = 100) {
-      // HF28: vote value fixed by max mana; vote consumes 2% mana at 100% weight.
       if (!account || !dgp || !rewardFund || !priceFeed) return null;
       try {
         const VOTE_REGEN_SECONDS = 5 * 24 * 60 * 60;
@@ -1407,7 +1373,6 @@
         const neededMana = maxMana * 0.02 * (weight / 10000);
         const lowMana = currentMana < neededMana;
 
-        // rshares derived from max mana (value constant as long as mana available)
         const rshares = maxMana * 0.02 * (weight / 10000);
 
         const rewardBalance = parseAssetFloat(rewardFund.reward_balance);
@@ -1438,7 +1403,6 @@
       const nowMs = now.getTime();
       const msInDay = 24 * 60 * 60 * 1000;
       const todayStartUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-      // Use UTC day boundaries so rollups align with the per-day buckets.
       const rangeCutoffs = {
         todayStart: todayStartUtc,
         tomorrowStart: todayStartUtc + msInDay,
@@ -1918,7 +1882,6 @@
       const dgpVal = dgp || lastDgp;
       const effectiveHpNow = getOwnedHp(acct, dgpVal);
 
-      // compute total hp delta in the window to derive a starting baseline
       const totalHpDeltaWindow = sliceDays.reduce((acc, d) => {
         const b = chartMap[d.key] || { hpDelta: 0 };
         return acc + (b.hpDelta || 0);
