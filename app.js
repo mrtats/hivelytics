@@ -7,6 +7,7 @@
     const voteSlider = document.getElementById('voteSlider');
     const analyticsPills = Array.from(document.querySelectorAll('.pill.toggle'));
     const avatarPlaceholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+    const HIVE_IMAGE_PROXY = 'https://images.hive.blog';
     let hasLoaded = false;
     let activeLoadId = 0;
     let lastRewardFund = null;
@@ -39,6 +40,22 @@
 
     function getSelectedRpcValue() {
       return rpcSelect.value === 'custom' ? customRpcEl.value.trim() : rpcSelect.value;
+    }
+
+    function getHiveProxyAvatar(username, rawAvatar) {
+      const name = typeof username === 'string' ? username.replace(/^@/, '').trim() : '';
+      const avatar = typeof rawAvatar === 'string' ? rawAvatar.trim() : '';
+      if (!name) return avatar;
+      if (!avatar) {
+        return `${HIVE_IMAGE_PROXY}/u/${name}/avatar`;
+      }
+      if (avatar.startsWith(HIVE_IMAGE_PROXY)) {
+        return avatar;
+      }
+      if (/^https?:\/\//i.test(avatar)) {
+        return `${HIVE_IMAGE_PROXY}/0x0/${avatar}`;
+      }
+      return `${HIVE_IMAGE_PROXY}/u/${name}/avatar`;
     }
 
     function validateRpcUrl(raw) {
@@ -862,7 +879,7 @@
 
       document.getElementById('accountReputation').textContent = 'Reputation ' + rep;
       const parsedProfile = parseProfile(account);
-      const avatarUrl = parsedProfile.avatar;
+      const avatarUrl = getHiveProxyAvatar(account.name, parsedProfile.avatar);
       const bio = parsedProfile.bio;
       document.getElementById('accountAvatar').src = avatarUrl || avatarPlaceholder;
       document.getElementById('accountAvatar').alt = account.name + ' avatar';
