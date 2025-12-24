@@ -946,7 +946,8 @@
         }
 
         const processItem = (item) => {
-          const ts = new Date(item.timestamp).getTime();
+          const ts = parseHiveTime(item.timestamp);
+          if (!ts) return;
           const ageDays = (nowMs - ts) / msInDay;
           if (ageDays > 30) return;
           const dayName = new Date(ts).toLocaleDateString('en', { weekday: 'short' });
@@ -1422,7 +1423,8 @@
         totals.all.totalUSD = totals.all.total.hbd + (totals.all.total.hive * price) + (totals.all.total.hp * price);
       }
       for (const [, item] of history) {
-        const ts = new Date(item.timestamp).getTime();
+        const ts = parseHiveTime(item.timestamp);
+        if (!ts) continue;
         const ageDays = (nowMs - ts) / msInDay;
         const dayName = new Date(ts).toLocaleDateString('en', { weekday: 'short' });
         const [type, op] = item.op;
