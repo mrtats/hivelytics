@@ -879,7 +879,7 @@
       const bio = parsedProfile.bio;
       document.getElementById('accountAvatar').src = avatarUrl || avatarPlaceholder;
       document.getElementById('accountAvatar').alt = account.name + ' avatar';
-      document.getElementById('accountName').textContent = '@' + account.name;
+      document.getElementById('accountName').textContent = account.name;
       document.getElementById('accountMeta').textContent = `Created ${new Date(account.created).toLocaleDateString()} • ${format(account.post_count, 0)} posts`;
       document.getElementById('accountBio').textContent = bio || '—';
       updateVoteDisplay(account, dgp, rewardFund, priceFeed);
