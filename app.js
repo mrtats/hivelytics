@@ -2,12 +2,18 @@
     const loadBtn = document.getElementById('loadBtn');
     const usernameEl = document.getElementById('username');
     const rpcSelect = document.getElementById('rpc');
-    const customRpcWrap = document.getElementById('customRpcWrap');
+    const rpcSelectWrap = document.querySelector('.rpc-select-wrap');
+    const rpcToggleEl = document.getElementById('rpcToggle');
     const customRpcEl = document.getElementById('customRpc');
     const voteSlider = document.getElementById('voteSlider');
     const analyticsPills = Array.from(document.querySelectorAll('.pill.toggle'));
     const avatarPlaceholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
     const HIVE_IMAGE_PROXY = 'https://images.hive.blog';
+    const rpcDotEl = document.getElementById('rpcDot');
+    let lastRpcChoice = rpcSelect?.value || '';
+    if (lastRpcChoice === 'custom') {
+      lastRpcChoice = rpcSelect?.options?.[0]?.value || '';
+    }
     let hasLoaded = false;
     let activeLoadId = 0;
     let lastRewardFund = null;
@@ -78,8 +84,15 @@
 
     rpcSelect.addEventListener('change', () => {
       const useCustom = rpcSelect.value === 'custom';
-      customRpcWrap.style.display = useCustom ? 'block' : 'none';
+      if (useCustom) {
+        setCustomMode(true);
+      } else {
+        lastRpcChoice = rpcSelect.value;
+        setCustomMode(false);
+      }
       saveRpcPreference();
+      setRpcDot('', 'Not connected');
+      setStatus('');
     });
 
     loadBtn.addEventListener('click', (e) => {
@@ -95,8 +108,24 @@
     });
     customRpcEl.addEventListener('change', () => {
       saveRpcPreference();
+      setRpcDot('', 'Not connected');
     });
+    if (rpcToggleEl) {
+      rpcToggleEl.addEventListener('click', () => {
+        const fallback = lastRpcChoice || rpcSelect.options[0]?.value || '';
+        if (fallback) {
+          rpcSelect.value = fallback;
+          lastRpcChoice = fallback;
+        }
+        setCustomMode(false);
+        saveRpcPreference();
+        setRpcDot('', 'Not connected');
+        setStatus('');
+      });
+    }
     loadRpcPreference();
+    setRpcDot('', 'Not connected');
+    setStatus('');
 
     analyticsPills.forEach(pill => {
       pill.addEventListener('click', () => {
@@ -137,13 +166,23 @@
           if (parsed.value === 'custom' && parsed.custom) {
             rpcSelect.value = 'custom';
             customRpcEl.value = parsed.custom;
-            customRpcWrap.style.display = 'block';
+            setCustomMode(true);
           } else if (parsed.value) {
             rpcSelect.value = parsed.value;
+            lastRpcChoice = parsed.value;
           }
         }
       } catch (err) {
         console.warn('failed to load rpc pref', err);
+      }
+      if (rpcSelect.value === 'custom') {
+        if (!lastRpcChoice || lastRpcChoice === 'custom') {
+          lastRpcChoice = rpcSelect.options[0]?.value || '';
+        }
+        setCustomMode(true);
+      } else {
+        lastRpcChoice = rpcSelect.value || lastRpcChoice;
+        setCustomMode(false);
       }
     }
 
@@ -164,8 +203,34 @@
     }
 
     function setStatus(text, isError = false) {
-      statusEl.textContent = text;
+      if (!statusEl) return;
+      statusEl.textContent = text || '';
       statusEl.classList.toggle('error', isError);
+    }
+
+    function setCustomMode(isCustom) {
+      if (!rpcSelectWrap) return;
+      rpcSelectWrap.classList.toggle('is-custom', isCustom);
+      if (isCustom && customRpcEl) {
+        customRpcEl.focus();
+      }
+    }
+
+    function setRpcDot(state, title = '') {
+      if (!rpcDotEl) return;
+      rpcDotEl.classList.remove('connected', 'loading', 'error');
+      if (state) rpcDotEl.classList.add(state);
+      rpcDotEl.title = title;
+    }
+
+    function formatRpcLabel(rpc) {
+      if (!rpc) return '';
+      try {
+        const url = new URL(rpc);
+        return url.host || rpc;
+      } catch (err) {
+        return rpc;
+      }
     }
 
     function setRewardsLoading() {
@@ -734,6 +799,7 @@
       const hiveLib = window.dhive;
       if (!hiveLib) {
         setStatus('Hive JS library failed to load.', true);
+        setRpcDot('error', 'Hive JS library failed to load.');
         return;
       }
 
@@ -743,14 +809,17 @@
       }
       if (!rpcValidation.ok) {
         setStatus(rpcValidation.error, true);
+        setRpcDot('error', rpcValidation.error);
         return;
       }
       const rpc = rpcValidation.url;
 
+      const rpcLabel = formatRpcLabel(rpc);
       setRewardsLoading();
       if (!hasLoaded) {
-        setStatus('Loading data…');
+        setStatus('Connecting…');
       }
+      setRpcDot('loading', `Connecting to ${rpcLabel}`);
       loadBtn.disabled = true;
       loadBtn.textContent = 'Loading…';
 
@@ -786,14 +855,17 @@
         fetchRewards(client, username, dgp, priceFeed, account, requestId);
 
         syncUrlUsername(username);
-        setStatus('Loaded from ' + rpc);
+        setStatus('');
+        setRpcDot('connected', `Connected to ${rpcLabel}`);
         hasLoaded = true;
         document.getElementById('dataWrap').style.display = 'block';
         updateVoteDisplay();
       } catch (err) {
         console.error(err);
         if (!isStale(requestId)) {
-          setStatus(err.message || 'Failed to load', true);
+          const message = err.message || 'Failed to load';
+          setStatus(message, true);
+          setRpcDot('error', message);
           resetData();
           if (!hasLoaded) {
             document.getElementById('dataWrap').style.display = 'none';

@@ -17,26 +17,29 @@
         </div>
       </div>
       <div class="controls rpc-controls">
+        <div class="rpc-header">
+          <div class="rpc-title">RPC Connection</div>
+          <span class="rpc-dot rpc-header-dot" id="rpcDot" title="Not connected"></span>
+        </div>
         <div class="rpc-fields">
           <div class="rpc-field">
-            <label for="rpc">RPC</label>
-            <select id="rpc">
-              <option value="https://api.openhive.network">https://api.openhive.network</option>
-              <option value="https://api.hive.blog">https://api.hive.blog</option>
-              <option value="https://api.deathwing.me">https://api.deathwing.me</option>
-              <option value="custom">Custom…</option>
-            </select>
-          </div>
-          <div id="customRpcWrap" class="rpc-field" style="display:none;">
-            <label for="customRpc">Custom RPC</label>
-            <input id="customRpc" type="text" placeholder="https://your-rpc.example" />
+            <div class="rpc-select-wrap">
+              <select id="rpc" aria-label="RPC endpoint">
+                <option value="https://api.openhive.network">https://api.openhive.network</option>
+                <option value="https://api.hive.blog">https://api.hive.blog</option>
+                <option value="https://api.deathwing.me">https://api.deathwing.me</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <input id="customRpc" class="rpc-custom-input" type="text" placeholder="Custom endpoint" aria-label="Custom RPC endpoint" />
+              <button class="rpc-toggle" id="rpcToggle" type="button" aria-label="Back to list" title="Back to list">✕</button>
+            </div>
           </div>
         </div>
-        <div class="status-text" id="status">Select an RPC and enter an account.</div>
+        <div class="rpc-status" id="status"></div>
       </div>
     </header>
 
-    <div class="controls" style="margin-top:14px;">
+    <div class="controls account-controls" style="margin-top:14px;">
       <div class="input-group">
         <input id="username" type="text" placeholder="Hive account" autocomplete="username" />
         <button id="loadBtn">Load account</button>
